@@ -1,0 +1,7 @@
+# SigLIP 2 base, patch16, 224px.
+name: siglip2-base
+model_name: google/siglip2-base-patch16-224
+image_size: 224
+freeze: true
+pretrained: true
+config_overrides: null

@@ -1,0 +1,46 @@
+# LOGER + Forgery Style Mixture with SigLIP2.
+defaults:
+  - backbone: siglip2_base
+  - model: loger
+  - peft: full
+  - fsm: default
+  - loss: loger
+  - optimizer: adamw
+  - scheduler: cosine
+  - data: faceforensics
+  - trainer: default
+  - logger: default
+  - callbacks: loger
+  - _self_
+
+seed: 0
+deterministic: true
+ckpt_path: null
+output_dir: ./outputs
+resume:
+  enabled: true
+  dir: outputs/loger_fsm_siglip2   # experiment root scanned for last.ckpt
+
+data:
+  root: /home/fred/Projetos/Ermis/open_set_deepfake/data/ffpp_frames/
+  augmentation:
+    enabled: true
+    hflip: 0.5
+    random_resize: 0.2
+    jpeg: 0.3
+    gaussian_blur: 0.2
+    motion_blur: 0.1
+    gaussian_noise: 0.1
+    brightness: 0.2
+    contrast: 0.2
+    color_jitter: 0.2
+    random_crop: 0.2
+
+model:
+  eval_resolutions: [224]
+
+hydra:
+  run:
+    dir: outputs/loger_fsm_siglip2/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

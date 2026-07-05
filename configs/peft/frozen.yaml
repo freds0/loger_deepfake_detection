@@ -1,0 +1,13 @@
+mode: frozen
+lora:
+  enabled: false
+  r: 8
+  alpha: 8.0
+  dropout: 0.0
+  targets: [q_proj, k_proj, v_proj]
+cdc:
+  enabled: false
+  bottleneck: 64
+  kernel_size: 3
+  theta: 0.7
+  activation: true

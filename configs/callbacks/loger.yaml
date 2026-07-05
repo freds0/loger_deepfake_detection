@@ -1,0 +1,15 @@
+# Save exactly best.ckpt and last.ckpt.
+checkpoint:
+  monitor: val/auc
+  mode: max
+  save_top_k: 1
+  save_last: true
+  filename: best
+  auto_insert_metric_name: false
+early_stopping:
+  enabled: false
+  monitor: val/auc
+  mode: max
+  patience: 10
+lr_monitor:
+  enabled: true

@@ -1,0 +1,7 @@
+# CLIP ViT-B/16 vision tower.
+name: clip-base
+model_name: openai/clip-vit-base-patch16
+image_size: 224
+freeze: true
+pretrained: true
+config_overrides: null

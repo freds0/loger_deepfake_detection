@@ -1,0 +1,15 @@
+# Checkpointing / early stopping / LR + progress monitoring.
+checkpoint:
+  monitor: val/auc           # AUC is the validation metric (paper Sec. IV-A)
+  mode: max
+  save_top_k: 1
+  save_last: true
+  filename: "osdfd-step{step}-auc{val/auc:.4f}"
+  auto_insert_metric_name: false
+early_stopping:
+  enabled: false             # paper trains for a fixed 30k iterations
+  monitor: val/auc
+  mode: max
+  patience: 10
+lr_monitor:
+  enabled: true

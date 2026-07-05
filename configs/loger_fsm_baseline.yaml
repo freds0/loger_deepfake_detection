@@ -1,0 +1,39 @@
+# LOGER baseline ablation: same architecture, FSM disabled.
+defaults:
+  - backbone: siglip2_base
+  - model: loger
+  - peft: full
+  - fsm: default
+  - loss: loger
+  - optimizer: adamw
+  - scheduler: cosine
+  - data: faceforensics
+  - trainer: default
+  - logger: default
+  - callbacks: loger
+  - _self_
+
+seed: 0
+deterministic: true
+ckpt_path: null
+output_dir: ./outputs
+resume:
+  enabled: true
+  dir: outputs/loger_fsm_baseline   # experiment root scanned for last.ckpt
+
+fsm:
+  enabled: false
+
+data:
+  root: /home/fred/Projetos/Ermis/open_set_deepfake/data/ffpp_frames/
+  augmentation:
+    enabled: false
+
+model:
+  eval_resolutions: [224]
+
+hydra:
+  run:
+    dir: outputs/loger_fsm_baseline/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

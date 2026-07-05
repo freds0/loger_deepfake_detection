@@ -1,0 +1,12 @@
+# Log to TensorBoard and Weights & Biases simultaneously.
+tensorboard:
+  enabled: true
+  save_dir: ${output_dir}/tb
+  name: osdfd
+wandb:
+  enabled: true
+  project: open-set-deepfake
+  name: null                 # run name (null = auto)
+  offline: false             # set true for offline logging
+  log_model: true            # upload best checkpoint as a W&B artifact
+  save_dir: ${output_dir}

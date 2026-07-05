@@ -1,0 +1,14 @@
+mode: lora
+# Forgery-aware PEFT: LoRA on attention Q/K/V + CDC adapter in the FFN.
+lora:
+  enabled: true
+  r: 8                        # rank (paper default for ViT-B, d=768)
+  alpha: 8.0                  # scaling = alpha / r
+  dropout: 0.0
+  targets: [q_proj, k_proj, v_proj]
+cdc:
+  enabled: true
+  bottleneck: 64              # 1x1 down-projection channels
+  kernel_size: 3              # CDC window (3x3, Fig. 5)
+  theta: 0.7                  # central-difference blend (1.0 = pure CDC, Eq. 3)
+  activation: true

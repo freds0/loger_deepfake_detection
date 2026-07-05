@@ -1,0 +1,6 @@
+# Adam, lr=3e-5, no weight decay, no LR decay (paper Sec. IV-A).
+name: adam
+lr: 3.0e-5
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.0

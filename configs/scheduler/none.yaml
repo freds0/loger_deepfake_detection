@@ -1,0 +1,9 @@
+# No LR schedule (paper: "no learning rate decay ... throughout training").
+name: none
+interval: step
+# fields below are used only by cosine/step variants
+t_max: 30000
+eta_min: 0.0
+step_size: 10000
+gamma: 0.1
+warmup_steps: 0
