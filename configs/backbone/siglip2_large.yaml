@@ -1,0 +1,7 @@
+# SigLIP 2 large, patch16, 256px.
+name: siglip2-large
+model_name: google/siglip2-large-patch16-256
+image_size: 256
+freeze: true
+pretrained: true
+config_overrides: null

@@ -1,0 +1,7 @@
+name: cosine
+interval: step
+t_max: 30000
+eta_min: 1.0e-7
+step_size: 10000
+gamma: 0.1
+warmup_steps: 0

@@ -1,0 +1,34 @@
+# Main Hydra config for OSDFD (SigLIP 2). Compose groups below; override any
+# value on the CLI, e.g. `python train.py optimizer.lr=1e-4 fsm.enabled=false`.
+defaults:
+  - backbone: siglip2_base
+  - model: default
+  - peft: lora_cdc
+  - fsm: default
+  - loss: bce_scl
+  - optimizer: adam
+  - scheduler: none
+  - data: faceforensics
+  - trainer: default
+  - logger: default
+  - callbacks: default
+  - _self_
+
+# Global settings
+seed: 0
+deterministic: true
+ckpt_path: null          # resume-from / evaluate checkpoint (null = none)
+# Auto-resume: when enabled and ckpt_path is null, train.py resumes from the
+# newest checkpoints/last.ckpt under `resume.dir` (or the experiment root).
+resume:
+  enabled: false
+  dir: null
+# Concrete run directory; set at runtime from Hydra's output dir so no
+# unresolved resolver is baked into saved checkpoints.
+output_dir: ./outputs
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

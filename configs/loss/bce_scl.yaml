@@ -1,0 +1,4 @@
+# Objective: L = BCE + scl_weight * SCL   (Eq. 10)
+scl_weight: 1.0              # lambda (paper default: 1.0)
+scl_margin: 0.01            # SCL margin (paper default: 0.01)
+pos_weight: null            # optional BCE positive-class weight

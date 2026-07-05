@@ -1,0 +1,15 @@
+# LOGER PEFT mode. mode: full | lora | frozen.
+mode: lora
+lora:
+  enabled: true
+  r: 8
+  alpha: 8.0
+  dropout: 0.0
+  targets: [q_proj, k_proj, v_proj]
+# Kept for compatibility with the OSDFD config schema; LOGER does not use CDC.
+cdc:
+  enabled: false
+  bottleneck: 64
+  kernel_size: 3
+  theta: 0.7
+  activation: true

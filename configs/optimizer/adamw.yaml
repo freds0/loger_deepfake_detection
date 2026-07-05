@@ -1,0 +1,6 @@
+# AdamW optimizer for LOGER.
+name: adamw
+lr: 3.0e-5
+beta1: 0.9
+beta2: 0.999
+weight_decay: 1.0e-2

@@ -1,0 +1,13 @@
+# LOGER local-global detector settings.
+name: loger
+# Aliases matching the task statement; construction uses the backbone group.
+backbone: ${backbone.name}
+pretrained: ${backbone.pretrained}
+freeze_backbone: ${backbone.freeze}
+
+head_hidden_dim: 256
+head_dropout: 0.1
+topk_ratio: 0.1              # k = floor(0.1 * number_of_patches)
+fusion_weights: null         # null = uniform logit-space averaging
+# Multi-resolution inference. Empty/null uses the input resolution only.
+eval_resolutions: []

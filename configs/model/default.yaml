@@ -1,0 +1,6 @@
+# Classifier / feature-fusion settings.
+name: osdfd
+feature_fusion: global        # "global" (MAP pooled) or "global_local"
+head_hidden_dim: 256          # penultimate (SCL) feature width
+head_dropout: 0.0
+train_norm: false             # also train LayerNorm affine params (optional)

@@ -1,0 +1,9 @@
+# LOGER objective: global/fused BCE + local CE/AUC/MIL/regularization.
+global_weight: 1.0
+fused_weight: 1.0
+ce_weight: 1.0
+auc_weight: 0.5
+mil_weight: 0.5
+reg_weight: 1.0e-4
+auc_margin: 1.0
+pos_weight: null

@@ -1,0 +1,7 @@
+# Forgery Style Mixture (train-only; disabled at val/inference).
+enabled: true
+probability: 0.5              # activation probability (MixStyle-style)
+beta_alpha: 0.1               # Beta(beta_alpha, beta_alpha) mixing prior
+# Backward-compatible aliases used by the existing OSDFD entry point.
+prob: ${.probability}
+alpha: ${.beta_alpha}

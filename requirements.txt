@@ -1,0 +1,43 @@
+# Core deep learning stack
+# Install PyTorch matching your CUDA (see README). Example for CUDA 12.1:
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1
+torchvision==0.20.1
+
+# PyTorch Lightning 2.x (imported as `lightning`)
+lightning==2.4.0
+torchmetrics==1.6.0
+
+# Backbones: SigLIP 2 / DINOv2 / CLIP (Siglip2 classes require transformers >= 4.53).
+# DINOv3 additionally requires transformers >= 4.56 (optional upgrade).
+transformers==4.53.2
+safetensors>=0.4.5
+
+# Configuration (Hydra + OmegaConf)
+hydra-core==1.3.2
+omegaconf==2.3.0
+
+# Logging (TensorBoard + Weights & Biases, used simultaneously)
+wandb==0.18.7
+tensorboard==2.18.0
+
+# Data / vision utils
+numpy<2.0
+pillow>=10.0.0
+opencv-python-headless>=4.9.0   # face detection fallback + motion-blur augmentation
+pandas>=2.0.0
+scikit-learn>=1.4.0
+matplotlib>=3.8.0
+
+# Testing
+pytest>=8.0.0
+
+# Optional: FF++ video preprocessing (scripts/preprocess_ffpp.py, MTCNN face detection)
+# facenet-pytorch>=2.6.0
+
+# Optional: dataset download helpers (scripts/download/)
+# huggingface_hub>=0.26.0
+
+# Optional face detectors (uncomment the one you use)
+# dlib>=19.24.0
+# retina-face>=0.0.17

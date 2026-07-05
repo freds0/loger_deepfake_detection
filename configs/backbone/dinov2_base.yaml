@@ -1,0 +1,7 @@
+# DINOv2 base, patch14, 224px.
+name: dinov2-base
+model_name: facebook/dinov2-base
+image_size: 224
+freeze: true
+pretrained: true
+config_overrides: null
