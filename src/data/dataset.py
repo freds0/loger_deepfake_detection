@@ -160,6 +160,37 @@ def records_from_manifest(csv_path: str, split: str | None = None) -> list[Recor
     ]
 
 
+def records_from_ntire(root: str, shard_nums: list[int]) -> list[Record]:
+    """Build records from the NTIRE 2026 shard layout.
+
+    Each ``<root>/shard_<n>/labels.csv`` has columns ``,image_name,label``
+    (``label``: 0 = real, 1 = fake) and images live under
+    ``<root>/shard_<n>/images/``. The dataset carries no per-generator
+    domain metadata, so the binary label doubles as the FSM domain id
+    (0 = real, 1 = fake).
+    """
+    root = Path(root)
+    records: list[Record] = []
+    for num in shard_nums:
+        shard_dir = root / f"shard_{num}"
+        csv_path = shard_dir / "labels.csv"
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"labels.csv not found under {shard_dir}")
+        df = pd.read_csv(csv_path, index_col=0)
+        for row in df.itertuples(index=False):
+            label = int(row.label)
+            records.append(
+                Record(
+                    path=str(shard_dir / "images" / row.image_name),
+                    label=label,
+                    domain=label,
+                )
+            )
+    if not records:
+        raise RuntimeError(f"No images found for shards {shard_nums} under {root}")
+    return records
+
+
 def oversample_real(records: list[Record], factor: int) -> list[Record]:
     """Replicate real records ``factor`` times to balance positives/negatives.
 
