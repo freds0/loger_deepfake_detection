@@ -18,6 +18,7 @@ from .dataset import (
     oversample_real,
     records_from_faceforensics,
     records_from_manifest,
+    records_from_ntire,
 )
 from .face_detection import FaceCropper
 from .transforms import build_transform
@@ -27,9 +28,11 @@ class ForgeryDataModule(L.LightningDataModule):
     """Data module for cross-manipulation / cross-dataset forgery detection.
 
     Args:
-        source: ``"faceforensics"`` (folder scan) or ``"manifest"`` (CSV).
-        root: Dataset root (folder mode).
+        source: ``"faceforensics"`` (folder scan), ``"manifest"`` (CSV) or
+            ``"ntire"`` (NTIRE 2026 shard layout).
+        root: Dataset root (folder mode / ntire mode).
         manifest: CSV path (manifest mode).
+        train_shards/val_shards/test_shards: Shard numbers per split (ntire mode).
         image_size: Model input resolution.
         batch_size: Batch size.
         num_workers: Dataloader workers.
@@ -53,6 +56,9 @@ class ForgeryDataModule(L.LightningDataModule):
         source: str = "faceforensics",
         root: str | None = None,
         manifest: str | None = None,
+        train_shards: list[int] | None = None,
+        val_shards: list[int] | None = None,
+        test_shards: list[int] | None = None,
         image_size: int = 224,
         batch_size: int = 48,
         num_workers: int = 8,
@@ -131,6 +137,13 @@ class ForgeryDataModule(L.LightningDataModule):
             if h.manifest is None:
                 raise ValueError("`manifest` is required for source='manifest'")
             records = records_from_manifest(h.manifest, split=split)
+        elif h.source == "ntire":
+            if h.root is None:
+                raise ValueError("`root` is required for source='ntire'")
+            shard_nums = getattr(h, f"{split}_shards")
+            if not shard_nums:
+                raise ValueError(f"`{split}_shards` is required for source='ntire'")
+            records = records_from_ntire(h.root, shard_nums)
         else:
             raise ValueError(f"Unknown data source: {h.source}")
         return self._limit_records(records, split)

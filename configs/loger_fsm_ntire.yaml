@@ -1,0 +1,37 @@
+# LOGER on the NTIRE 2026 Robust AI-generated Image Detection In The Wild
+# dataset. FSM is disabled: NTIRE has no per-generator domain labels, only a
+# binary real/fake label, so the Forgery Style Mixture module (which mixes
+# style across distinct forgery domains) has nothing meaningful to condition on.
+defaults:
+  - backbone: siglip2_base
+  - model: loger
+  - peft: full
+  - fsm: default
+  - loss: loger
+  - optimizer: adamw
+  - scheduler: cosine
+  - data: ntire
+  - trainer: default
+  - logger: default
+  - callbacks: loger
+  - _self_
+
+seed: 0
+deterministic: true
+ckpt_path: null
+output_dir: ./outputs
+resume:
+  enabled: true
+  dir: outputs/loger_fsm_ntire   # experiment root scanned for last.ckpt
+
+fsm:
+  enabled: false
+
+model:
+  eval_resolutions: [224]
+
+hydra:
+  run:
+    dir: outputs/loger_fsm_ntire/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

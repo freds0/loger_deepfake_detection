@@ -1,0 +1,51 @@
+# NTIRE 2026 Robust AI-generated Image Detection In The Wild — shard layout
+# (<root>/shard_<n>/labels.csv + <root>/shard_<n>/images/). No per-generator
+# domain metadata is provided, so label doubles as FSM domain (0=real, 1=fake).
+source: ntire
+root: data/NTIRE-RobustAIGenDetection-train
+manifest: null
+train_shards: [0, 1, 2, 3, 4]
+val_shards: [5]
+test_shards: [6]
+image_size: ${backbone.image_size}
+batch_size: 48
+num_workers: 8
+real_oversample: 1           # class balance unknown; disabled unless tuned
+use_face_crop: false
+face_backend: opencv
+face_margin: 1.3
+domain_map: null
+normalization_mean: [0.5, 0.5, 0.5]
+normalization_std: [0.5, 0.5, 0.5]
+max_records_per_split: null
+
+augmentation:
+  enabled: false
+  hflip: 0.5
+  random_resize: 0.0
+  resize_scale: [0.25, 0.75]
+  jpeg: 0.0
+  jpeg_quality: [40, 90]
+  gaussian_blur: 0.0
+  blur_sigma: [0.1, 2.0]
+  motion_blur: 0.0
+  motion_kernel: [3, 9]
+  gaussian_noise: 0.0
+  noise_std: 0.03
+  brightness: 0.0
+  brightness_limit: 0.2
+  contrast: 0.0
+  contrast_limit: 0.2
+  color_jitter: 0.0
+  color_jitter_strength: 0.2
+  hue: 0.05
+  random_crop: 0.0
+  crop_scale: [0.8, 1.0]
+  random_resized_crop: false
+  rrc_scale: [0.8, 1.0]
+  downscale: 0.0
+  downscale_range: [0.25, 0.75]
+  random_erasing: 0.0
+
+pin_memory: true
+persistent_workers: true
