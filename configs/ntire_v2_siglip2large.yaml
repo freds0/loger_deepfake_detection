@@ -1,0 +1,7 @@
+# V5: backbone ladder (PLAN_v0.2 §2). SigLIP2-large fits the budget only in
+# LoRA. Note: siglip2-large is 256px; data.image_size follows backbone.image_size.
+defaults:
+  - ntire_v2_base
+  - override /backbone: siglip2_large
+  - override /peft: loger_lora
+  - _self_

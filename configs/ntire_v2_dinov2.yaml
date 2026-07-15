@@ -1,0 +1,7 @@
+# V5: backbone ladder (PLAN_v0.2 §2). DINOv2-base.
+# Normalisation stats are derived from backbone.name by the entry point
+# (_prepare_cfg -> normalization_stats), so no manual mean/std override.
+defaults:
+  - ntire_v2_base
+  - override /backbone: dinov2_base
+  - _self_

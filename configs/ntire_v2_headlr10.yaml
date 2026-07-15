@@ -1,0 +1,8 @@
+# V8: discriminative LR -- from-scratch heads at 10x the backbone LR
+# (PLAN_v0.2 §3).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+optimizer:
+  head_lr_multiplier: 10.0

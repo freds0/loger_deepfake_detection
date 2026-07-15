@@ -36,6 +36,7 @@ from .backbones import build_backbone, inject_lora
 from .fsm import ForgeryStyleMixture
 
 PEFT_MODES = ("full", "lora", "frozen")
+LOCAL_POOLS = ("topk", "lse")
 
 
 @dataclass
@@ -114,6 +115,26 @@ def mil_topk_pool(patch_diffs: torch.Tensor, ratio: float = 0.1) -> torch.Tensor
     return topk.mean(dim=1)
 
 
+def lse_pool(patch_diffs: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
+    """Log-sum-exp (soft-max) pooling of per-patch logit differences.
+
+    ``d_img = tau * logsumexp(d_i / tau) - tau * log(N)``. The ``-tau*log(N)``
+    correction keeps the output on the same scale as mean pooling, so the
+    temperature smoothly interpolates between max pooling (``tau -> 0``) and
+    mean pooling (``tau -> inf``) while every patch keeps a gradient (unlike the
+    hard top-k selection of :func:`mil_topk_pool`).
+
+    Args:
+        patch_diffs: Per-patch logit differences ``(B, N)``.
+        temperature: Softness ``tau > 0``.
+
+    Returns:
+        Image-level logits ``(B,)``.
+    """
+    n = patch_diffs.size(1)
+    return temperature * (torch.logsumexp(patch_diffs / temperature, dim=1) - math.log(n))
+
+
 class LOGERModel(nn.Module):
     """LOGER dual-branch detector with train-only Forgery Style Mixture.
 
@@ -125,7 +146,17 @@ class LOGERModel(nn.Module):
         lora_r / lora_alpha / lora_dropout: LoRA hyper-parameters (lora mode).
         fsm_prob: FSM activation probability (``0`` disables FSM).
         fsm_alpha: ``Beta(alpha, alpha)`` parameter for FSM mixing.
-        topk_ratio: MIL top-k ratio (paper: 0.1 -> k = floor(0.1 * N)).
+        fsm_require_distinct_domains: When ``True`` (default) FSM only mixes
+            fakes of different forgery domains (needs domain labels); when
+            ``False`` it mixes any two fakes (MixStyle-like), so FSM works on
+            datasets with a single/absent forgery-domain label (e.g. NTIRE).
+        topk_ratio: MIL top-k ratio (paper: 0.1 -> k = floor(0.1 * N));
+            only used when ``local_pool == "topk"``.
+        local_pool: Local-branch aggregation, ``"topk"`` (MIL top-k, paper) or
+            ``"lse"`` (soft log-sum-exp pooling, differentiable over all
+            patches).
+        pool_temperature: Temperature ``tau`` for ``local_pool == "lse"``
+            (``->0`` max, ``->inf`` mean).
         head_hidden_dim: Hidden width of both branch heads.
         head_dropout: Dropout in both branch heads.
         fusion_weights: Branch weights ``(alpha_global, alpha_local)``;
@@ -155,7 +186,10 @@ class LOGERModel(nn.Module):
         lora_dropout: float = 0.0,
         fsm_prob: float = 0.5,
         fsm_alpha: float = 0.1,
+        fsm_require_distinct_domains: bool = True,
         topk_ratio: float = 0.1,
+        local_pool: str = "topk",
+        pool_temperature: float = 1.0,
         head_hidden_dim: int = 256,
         head_dropout: float = 0.0,
         fusion_weights: tuple[float, float] | None = None,
@@ -167,6 +201,8 @@ class LOGERModel(nn.Module):
         super().__init__()
         if peft_mode not in PEFT_MODES:
             raise ValueError(f"Unknown peft_mode: {peft_mode} (choose from {PEFT_MODES})")
+        if local_pool not in LOCAL_POOLS:
+            raise ValueError(f"Unknown local_pool: {local_pool} (choose from {LOCAL_POOLS})")
         if learnable_fusion and fusion_weights is not None:
             raise ValueError(
                 "fusion_weights and learnable_fusion are mutually exclusive "
@@ -174,6 +210,8 @@ class LOGERModel(nn.Module):
             )
         self.peft_mode = peft_mode
         self.topk_ratio = topk_ratio
+        self.local_pool = local_pool
+        self.pool_temperature = pool_temperature
 
         self.backbone = build_backbone(
             backbone_name,
@@ -186,7 +224,11 @@ class LOGERModel(nn.Module):
         if peft_mode == "lora":
             inject_lora(self.backbone, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
 
-        self.fsm = ForgeryStyleMixture(prob=fsm_prob, alpha=fsm_alpha)
+        self.fsm = ForgeryStyleMixture(
+            prob=fsm_prob,
+            alpha=fsm_alpha,
+            require_distinct_domains=fsm_require_distinct_domains,
+        )
 
         d = self.backbone.hidden_size
         self.global_head = ImageClassifier(d, hidden_dim=head_hidden_dim, dropout=head_dropout)
@@ -228,9 +270,12 @@ class LOGERModel(nn.Module):
         pooled = self.backbone.pool(tokens)
         global_logits, scl_features = self.global_head(pooled)
 
-        # Local branch: patch classifier -> d_i -> MIL top-k -> d_local.
+        # Local branch: patch classifier -> d_i -> pooling -> d_local.
         patch_diffs = self.local_head(self.backbone.patches(tokens))
-        local_logits = mil_topk_pool(patch_diffs, self.topk_ratio)
+        if self.local_pool == "lse":
+            local_logits = lse_pool(patch_diffs, self.pool_temperature)
+        else:
+            local_logits = mil_topk_pool(patch_diffs, self.topk_ratio)
 
         # Logit-space fusion: d = alpha_g * d_global + alpha_l * d_local.
         w = torch.softmax(self.fusion_logits, dim=0) if self.learnable_fusion else self.fusion_weights

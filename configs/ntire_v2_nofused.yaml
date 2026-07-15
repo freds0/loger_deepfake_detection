@@ -1,0 +1,8 @@
+# V3: drop the fused-logit BCE (a repo addition absent from the paper) to keep
+# the two branches decoupled (PLAN_v0.2 §2).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+loss:
+  fused_weight: 0.0

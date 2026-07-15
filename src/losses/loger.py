@@ -30,6 +30,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .single_center_loss import SingleCenterLoss
+
 
 class AUCSurrogateLoss(nn.Module):
     """Pairwise squared-hinge surrogate of the AUC on image-level logits.
@@ -102,6 +104,33 @@ class PatchLogitRegularization(nn.Module):
         return patch_diffs.pow(2).mean()
 
 
+class FocalLoss(nn.Module):
+    """Binary focal loss on logits (Lin et al., 2017).
+
+    ``L = alpha_t * (1 - p_t)^gamma * BCE(logit, y)``, focusing training on
+    hard (badly-scored) examples. With ``gamma == 0`` and ``alpha == 0.5`` it
+    reduces to ``0.5 * BCE``.
+
+    Args:
+        gamma: Focusing parameter (larger = more down-weighting of easy
+            examples).
+        alpha: Weight of the positive (fake) class; ``1 - alpha`` for real.
+    """
+
+    def __init__(self, gamma: float = 2.0, alpha: float = 0.25) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Args: image-level logits ``(B,)`` and float labels ``(B,)``."""
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+        p = torch.sigmoid(logits)
+        p_t = p * targets + (1.0 - p) * (1.0 - targets)
+        alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
+        return (alpha_t * (1.0 - p_t).pow(self.gamma) * bce).mean()
+
+
 class LOGERLoss(nn.Module):
     """Full LOGER objective with independently weighted components.
 
@@ -118,6 +147,13 @@ class LOGERLoss(nn.Module):
         auc_margin: Margin of the AUC surrogate.
         topk_ratio: MIL top-k ratio (must match the model).
         pos_weight: Optional positive-class weight for all BCE terms.
+        focal: Use Focal Loss instead of BCE for the *image-level* global and
+            fused terms (the local ``L_CE`` stays BCE, mirroring the LOGER
+            paper where only the global model M3 uses Focal Loss).
+        focal_gamma / focal_alpha: Focal Loss hyper-parameters (``focal=True``).
+        scl_weight: Weight of the Single-Center Loss on the global-branch
+            penultimate features (``0`` disables it). Herança do OSDFD.
+        scl_margin: Single-Center Loss margin (paper default 0.01).
     """
 
     def __init__(
@@ -131,6 +167,11 @@ class LOGERLoss(nn.Module):
         auc_margin: float = 1.0,
         topk_ratio: float = 0.1,
         pos_weight: float | None = None,
+        focal: bool = False,
+        focal_gamma: float = 2.0,
+        focal_alpha: float = 0.25,
+        scl_weight: float = 0.0,
+        scl_margin: float = 0.01,
     ) -> None:
         super().__init__()
         self.global_weight = global_weight
@@ -139,12 +180,16 @@ class LOGERLoss(nn.Module):
         self.auc_weight = auc_weight
         self.mil_weight = mil_weight
         self.reg_weight = reg_weight
+        self.scl_weight = scl_weight
 
         pw = torch.tensor(pos_weight) if pos_weight is not None else None
         self.bce = nn.BCEWithLogitsLoss(pos_weight=pw)
+        # Image-level loss for the global/fused logits: Focal or BCE.
+        self.image_loss = FocalLoss(gamma=focal_gamma, alpha=focal_alpha) if focal else self.bce
         self.auc = AUCSurrogateLoss(margin=auc_margin)
         self.mil = MILLoss(topk_ratio=topk_ratio)
         self.reg = PatchLogitRegularization()
+        self.scl = SingleCenterLoss(margin=scl_margin) if scl_weight > 0 else None
 
     def forward(
         self,
@@ -153,6 +198,7 @@ class LOGERLoss(nn.Module):
         local_logits: torch.Tensor,
         patch_diffs: torch.Tensor,
         labels: torch.Tensor,
+        scl_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the total loss and its detached components.
 
@@ -162,14 +208,16 @@ class LOGERLoss(nn.Module):
             local_logits: MIL-pooled local logits ``(B,)``.
             patch_diffs: Per-patch logits ``(B, N)``.
             labels: Binary labels ``(B,)`` (1 = fake, 0 = real).
+            scl_features: Global-head penultimate features ``(B, H)``; required
+                when ``scl_weight > 0`` (Single-Center Loss).
 
         Returns:
             ``(total_loss, parts)`` with detached scalars for logging.
         """
         labels_f = labels.to(fused_logits.dtype)
 
-        bce_global = self.bce(global_logits, labels_f)
-        bce_fused = self.bce(fused_logits, labels_f)
+        bce_global = self.image_loss(global_logits, labels_f)
+        bce_fused = self.image_loss(fused_logits, labels_f)
         ce_local = self.bce(local_logits, labels_f)
         auc = self.auc(local_logits, labels)
         mil = self.mil(patch_diffs, labels)
@@ -192,4 +240,9 @@ class LOGERLoss(nn.Module):
             "local_reg": reg.detach(),
             "total": total.detach(),
         }
+        if self.scl is not None and scl_features is not None:
+            scl = self.scl(scl_features, labels)
+            total = total + self.scl_weight * scl
+            parts["scl"] = scl.detach()
+            parts["total"] = total.detach()
         return total, parts

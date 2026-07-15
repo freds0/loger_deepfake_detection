@@ -1,0 +1,6 @@
+# V5: backbone ladder (PLAN_v0.2 §2). DINOv3-base (requires transformers>=4.56;
+# upgrade only in the ablation env). Stats derived from backbone.name.
+defaults:
+  - ntire_v2_base
+  - override /backbone: dinov3_base
+  - _self_

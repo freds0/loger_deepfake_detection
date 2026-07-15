@@ -1,0 +1,9 @@
+# V11: reactivate FSM on NTIRE by dropping the distinct-domain requirement
+# (MixStyle-like mixing of any two fakes) (PLAN_v0.2 §3).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+fsm:
+  enabled: true
+  require_distinct_domains: false

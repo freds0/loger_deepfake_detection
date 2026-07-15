@@ -1,0 +1,13 @@
+# V12: local-only specialist (PLAN_v0.2 §4). Only the local branch learns
+# (global/fused loss terms zeroed and fusion routes everything to local).
+# Ideally paired with a different backbone (e.g. dinov3) via override /backbone.
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  fusion_weights: [0.0, 1.0]
+
+loss:
+  global_weight: 0.0
+  fused_weight: 0.0

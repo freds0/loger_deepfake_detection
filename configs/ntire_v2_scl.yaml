@@ -1,0 +1,7 @@
+# V10: Single-Center Loss on the global-head features, lambda=1 (PLAN_v0.2 §3).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+loss:
+  scl_weight: 1.0

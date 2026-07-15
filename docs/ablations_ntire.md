@@ -99,3 +99,103 @@ epoch — see `on_train_epoch_end`).
 | siglip2_large | lora | | | | | |
 
 **Decision:** _(fill in once the table is complete — winning backbone and why)_
+
+---
+
+# PLAN v0.2 architecture ablations
+
+The variations proposed in `PLAN_v0.2.md` are now materialised as dedicated
+Hydra configs (`configs/ntire_v2_*.yaml`), so each run is a single
+`--config-name`, no long override strings. They all compose
+`ntire_v2_base.yaml`, which fixes the shared regime (8k steps, 100k/20k subset,
+seed 0, resume off, EMA on, augmentation on). Baseline = `ntire_v2_base` with no
+overrides.
+
+Run any variant with:
+
+```bash
+python train_loger.py --config-name ntire_v2_<id> \
+  data.root=<NTIRE_ROOT>
+```
+
+Adoption rule (see PLAN_v0.2 §1.2): Δ `val/auc` (EMA) ≥ **+0.10 pp** over the
+baseline; ties broken toward the simpler / cheaper variant. Fill the tables
+after each run.
+
+## Group 1 — config-only (no code changes)
+
+| Config | Variation | val/auc (EMA) | val/acc | val/eer | steps/s | gpu/mem_GB |
+|---|---|---|---|---|---|---|
+| ntire_v2_base | baseline (topk 0.1, fixed fusion) | | | | | |
+| ntire_v2_topk05 | MIL ratio 0.05 | | | | | |
+| ntire_v2_topk20 | MIL ratio 0.20 | | | | | |
+| ntire_v2_topk40 | MIL ratio 0.40 | | | | | |
+| ntire_v2_topk100 | MIL ratio 1.0 (mean pool) | | | | | |
+| ntire_v2_learnfusion | learnable fusion weights | | | | | |
+| ntire_v2_nofused | drop fused-logit BCE | | | | | |
+| ntire_v2_head512 | head hidden 512 | | | | | |
+| ntire_v2_head1024 | head hidden 1024 | | | | | |
+| ntire_v2_dinov2 | backbone DINOv2-base | | | | | |
+| ntire_v2_dinov3 | backbone DINOv3-base | | | | | |
+| ntire_v2_siglip2large | SigLIP2-large + LoRA | | | | | |
+
+For `ntire_v2_learnfusion`, also record the converged
+`fusion/w_global` / `fusion/w_local` (logged each epoch): a strong tilt toward
+the global branch corroborates the top-k / LSE findings.
+
+## Group 1b — test-time only (no training; reuse the baseline checkpoint)
+
+V6: multi-resolution + hflip TTA are evaluation switches over the baseline
+`best.ckpt`, not new runs:
+
+```bash
+python test_loger.py --config-name ntire_v2_base ckpt_path=<baseline_best.ckpt> \
+  'model.eval_resolutions=[224,336]'
+python test_loger.py --config-name ntire_v2_base ckpt_path=<baseline_best.ckpt> \
+  'model.eval_resolutions=[224,336,448]' model.tta_hflip=true
+```
+
+| Eval mode | val/auc | val/acc | val/eer |
+|---|---|---|---|
+| [224] (baseline) | | | |
+| [224,336] | | | |
+| [224,336,448] | | | |
+| [224,336,448] + hflip | | | |
+
+## Group 2 — code-backed variants (flags default off)
+
+| Config | Variation | val/auc (EMA) | val/acc | val/eer | steps/s | gpu/mem_GB |
+|---|---|---|---|---|---|---|
+| ntire_v2_focal | Focal Loss on global+fused | | | | | |
+| ntire_v2_headlr10 | head LR 10x backbone | | | | | |
+| ntire_v2_lse_t05 | LSE pooling, tau 0.5 | | | | | |
+| ntire_v2_lse_t10 | LSE pooling, tau 1.0 | | | | | |
+| ntire_v2_scl | + Single-Center Loss (λ=1) | | | | | |
+| ntire_v2_fsm_nodomain | domain-free FSM (reactivated) | | | | | |
+
+## Group 3 — mini-ensemble (V12)
+
+Train two specialists, then logit-average their `predictions.csv`:
+
+```bash
+python train_loger.py --config-name ntire_v2_spec_global data.root=<NTIRE_ROOT>
+python train_loger.py --config-name ntire_v2_spec_local  data.root=<NTIRE_ROOT>
+python test_loger.py --config-name ntire_v2_spec_global ckpt_path=<global_best.ckpt>
+python test_loger.py --config-name ntire_v2_spec_local  ckpt_path=<local_best.ckpt>
+python scripts/fuse_predictions.py <global_out>/predictions.csv <local_out>/predictions.csv
+```
+
+| Model | val/auc | val/acc | val/eer |
+|---|---|---|---|
+| global specialist | | | |
+| local specialist | | | |
+| logit-average ensemble | | | |
+
+Adopt the ensemble only if Δ `val/auc` ≥ +0.15 pp over the best single model
+(it costs N× inference).
+
+## Combining winners
+
+The winners of at most one variation per eixo (pooling, objective, LR,
+backbone, FSM) are combined into `loger_fsm_ntire_v3` and re-validated at 8k
+before the full 30k-step run — see PLAN_v0.2 §5.

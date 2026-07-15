@@ -2,6 +2,9 @@
 enabled: true
 probability: 0.5              # activation probability (MixStyle-style)
 beta_alpha: 0.1               # Beta(beta_alpha, beta_alpha) mixing prior
+# When false, mix any two fakes (no domain labels needed) instead of only
+# fakes of different forgery domains -- lets FSM run on NTIRE.
+require_distinct_domains: true
 # Backward-compatible aliases used by the existing OSDFD entry point.
 prob: ${.probability}
 alpha: ${.beta_alpha}

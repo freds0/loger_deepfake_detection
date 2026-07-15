@@ -1,0 +1,7 @@
+# V1: MIL top-k prior sweep (PLAN_v0.2 §2). ratio 0.05.
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  topk_ratio: 0.05

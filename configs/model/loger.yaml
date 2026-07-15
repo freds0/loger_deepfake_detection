@@ -7,7 +7,9 @@ freeze_backbone: ${backbone.freeze}
 
 head_hidden_dim: 256
 head_dropout: 0.1
-topk_ratio: 0.1              # k = floor(0.1 * number_of_patches)
+topk_ratio: 0.1              # k = floor(0.1 * number_of_patches); local_pool=topk only
+local_pool: topk            # topk (MIL, paper) | lse (soft log-sum-exp pooling)
+pool_temperature: 1.0       # tau for local_pool=lse (->0 max, ->inf mean)
 fusion_weights: null         # null = uniform logit-space averaging
 learnable_fusion: false      # mutually exclusive with fusion_weights
 # Multi-resolution inference. Empty/null uses the input resolution only.

@@ -1,0 +1,7 @@
+# V7: Focal Loss on the image-level (global + fused) terms (PLAN_v0.2 §3).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+loss:
+  focal: true

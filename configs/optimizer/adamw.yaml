@@ -4,3 +4,5 @@ lr: 3.0e-5
 beta1: 0.9
 beta2: 0.999
 weight_decay: 1.0e-2
+# Head LR = lr * head_lr_multiplier (backbone keeps lr). 1.0 = single group.
+head_lr_multiplier: 1.0

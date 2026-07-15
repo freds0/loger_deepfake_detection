@@ -1,0 +1,28 @@
+# PLAN v0.2 ablation base: composes the NTIRE experiment and fixes the short,
+# fixed-data regime so the only difference between ablation runs is the
+# variation under test. Variant configs compose THIS file and add only their
+# overrides. See PLAN_v0.2.md §1.
+defaults:
+  - loger_fsm_ntire
+  - _self_
+
+seed: 0
+resume:
+  enabled: false             # ablations never resume another run's checkpoint
+
+data:
+  train_shards: [0, 1, 2, 3, 4, 5]
+  max_records_per_split:
+    train: 100000            # fixed subset => ~8k-step runs stay comparable
+    val: 20000
+
+trainer:
+  max_steps: 8000
+  val_check_interval: 1000
+  limit_val_batches: null
+
+hydra:
+  run:
+    dir: outputs/ablation_v2/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

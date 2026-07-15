@@ -44,7 +44,10 @@ def build_loger_model(cfg: DictConfig) -> LOGERModel:
         lora_dropout=cfg.peft.lora.dropout,
         fsm_prob=fsm_prob if cfg.fsm.enabled else 0.0,
         fsm_alpha=fsm_alpha,
+        fsm_require_distinct_domains=_select(cfg, "fsm.require_distinct_domains", True),
         topk_ratio=cfg.model.topk_ratio,
+        local_pool=_select(cfg, "model.local_pool", "topk"),
+        pool_temperature=_select(cfg, "model.pool_temperature", 1.0),
         head_hidden_dim=cfg.model.head_hidden_dim,
         head_dropout=cfg.model.head_dropout,
         fusion_weights=tuple(fusion) if fusion is not None else None,
@@ -75,6 +78,11 @@ class LOGERLightningModule(L.LightningModule):
             auc_margin=lc.auc_margin,
             topk_ratio=cfg.model.topk_ratio,
             pos_weight=lc.pos_weight,
+            focal=_select(cfg, "loss.focal", False),
+            focal_gamma=_select(cfg, "loss.focal_gamma", 2.0),
+            focal_alpha=_select(cfg, "loss.focal_alpha", 0.25),
+            scl_weight=_select(cfg, "loss.scl_weight", 0.0),
+            scl_margin=_select(cfg, "loss.scl_margin", 0.01),
         )
         # Multi-resolution evaluation (null/empty = single resolution).
         self.eval_resolutions = list(cfg.model.eval_resolutions or [])
@@ -142,7 +150,8 @@ class LOGERLightningModule(L.LightningModule):
             apply_fsm=True,
         )
         loss, parts = self.loss_fn(
-            out.logits, out.global_logits, out.local_logits, out.patch_diffs, batch["label"]
+            out.logits, out.global_logits, out.local_logits, out.patch_diffs, batch["label"],
+            scl_features=out.scl_features,
         )
         bs = batch["label"].size(0)
         self.log("train/loss", parts["total"], prog_bar=True, batch_size=bs)
@@ -174,7 +183,8 @@ class LOGERLightningModule(L.LightningModule):
     ) -> torch.Tensor:
         out = self.model(batch["pixel_values"], apply_fsm=False)
         loss, _ = self.loss_fn(
-            out.logits, out.global_logits, out.local_logits, out.patch_diffs, batch["label"]
+            out.logits, out.global_logits, out.local_logits, out.patch_diffs, batch["label"],
+            scl_features=out.scl_features,
         )
         logits = (
             self._eval_logits(
@@ -309,9 +319,30 @@ class LOGERLightningModule(L.LightningModule):
         self.best_threshold = checkpoint.get("best_threshold", 0.5)
 
     # ------------------------------------------------------------- optimizers
+    def _param_groups(self, oc: DictConfig):
+        """Trainable parameters, optionally split into backbone / head groups.
+
+        With ``optimizer.head_lr_multiplier != 1.0`` the from-scratch branch
+        heads (and the fusion parameter) get ``lr * multiplier`` while the
+        pretrained backbone keeps the base ``lr`` -- the discriminative-LR
+        schedule the LOGER paper uses. Empty groups (e.g. a frozen backbone)
+        are dropped so the optimizer never sees a zero-parameter group.
+        """
+        mult = float(_select(self.cfg, "optimizer.head_lr_multiplier", 1.0) or 1.0)
+        if mult == 1.0:
+            return list(self.model.trainable_parameters())
+        backbone_ids = {id(p) for p in self.model.backbone.parameters()}
+        backbone = [p for p in self.model.trainable_parameters() if id(p) in backbone_ids]
+        heads = [p for p in self.model.trainable_parameters() if id(p) not in backbone_ids]
+        groups = [
+            {"params": backbone, "lr": oc.lr},
+            {"params": heads, "lr": oc.lr * mult},
+        ]
+        return [g for g in groups if g["params"]]
+
     def configure_optimizers(self):
         oc = self.cfg.optimizer
-        params = list(self.model.trainable_parameters())
+        params = self._param_groups(oc)
         if oc.name == "adamw":
             optimizer = torch.optim.AdamW(
                 params, lr=oc.lr, betas=(oc.beta1, oc.beta2), weight_decay=oc.weight_decay

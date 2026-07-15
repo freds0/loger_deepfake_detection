@@ -1,0 +1,17 @@
+# V12: global-only specialist (PLAN_v0.2 §4). Only the global branch learns
+# (local/fused loss terms zeroed and fusion routes everything to global), so
+# its predictions.csv can be logit-averaged with a local specialist by
+# scripts/fuse_predictions.py.
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  fusion_weights: [1.0, 0.0]
+
+loss:
+  fused_weight: 0.0
+  ce_weight: 0.0
+  auc_weight: 0.0
+  mil_weight: 0.0
+  reg_weight: 0.0

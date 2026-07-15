@@ -1,0 +1,7 @@
+# V4: head capacity sweep (PLAN_v0.2 §2). hidden 512.
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  head_hidden_dim: 512

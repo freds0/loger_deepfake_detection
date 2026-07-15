@@ -1,0 +1,7 @@
+# V1: MIL top-k prior sweep (PLAN_v0.2 §2). ratio 1.0 = mean pooling (k = N).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  topk_ratio: 1.0

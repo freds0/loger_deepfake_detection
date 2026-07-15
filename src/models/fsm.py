@@ -53,13 +53,24 @@ class ForgeryStyleMixture(nn.Module):
     Args:
         prob: Probability of activating FSM on a given training forward pass.
         alpha: Both parameters of the ``Beta(alpha, alpha)`` mixing prior.
+        require_distinct_domains: When ``True`` (paper default) each fake is
+            paired with a fake of a *different* forgery domain; when ``False``
+            any two fakes are paired (MixStyle-like), so FSM stays active on
+            datasets without per-generator domain labels (e.g. NTIRE).
         eps: Numerical stabiliser for the standard deviation.
     """
 
-    def __init__(self, prob: float = 0.5, alpha: float = 0.1, eps: float = 1e-6) -> None:
+    def __init__(
+        self,
+        prob: float = 0.5,
+        alpha: float = 0.1,
+        require_distinct_domains: bool = True,
+        eps: float = 1e-6,
+    ) -> None:
         super().__init__()
         self.prob = prob
         self.eps = eps
+        self.require_distinct_domains = require_distinct_domains
         # Beta(alpha, alpha) prior on the mixing weight delta (Eqs. 7-8).
         self.beta = torch.distributions.Beta(alpha, alpha)
 
@@ -87,6 +98,18 @@ class ForgeryStyleMixture(nn.Module):
             j = candidates[torch.randint(len(candidates), (1,), device=domains.device)]
             perm[i] = j
         return perm
+
+    @staticmethod
+    def _derangement(f: int, device: torch.device) -> torch.Tensor:
+        """Pair every fake with a *different* fake, ignoring domain labels.
+
+        A random circular shift ``perm[i] = (i + s) % F`` with ``s`` drawn from
+        ``[1, F-1]`` is a derangement for ``F >= 2`` (``perm[i] != i`` for all
+        ``i``) in O(1), used when domain labels are unavailable (``require_
+        distinct_domains=False``). Callers guarantee ``F >= 2``.
+        """
+        shift = int(torch.randint(1, f, (1,), device=device).item())
+        return (torch.arange(f, device=device) + shift) % f
 
     def forward(
         self,
@@ -117,10 +140,12 @@ class ForgeryStyleMixture(nn.Module):
             return tokens
 
         fake_tokens = tokens[fake_idx]              # F_sort (fake subset)
-        fake_domains = domains[fake_idx]
-        perm = self._domain_shuffle(fake_domains)
-        if torch.equal(perm, torch.arange(perm.numel(), device=perm.device)):
-            return tokens  # could not satisfy the different-domain constraint
+        if self.require_distinct_domains:
+            perm = self._domain_shuffle(domains[fake_idx])
+            if torch.equal(perm, torch.arange(perm.numel(), device=perm.device)):
+                return tokens  # could not satisfy the different-domain constraint
+        else:
+            perm = self._derangement(fake_tokens.size(0), fake_tokens.device)
 
         shuffled = fake_tokens[perm]                # F~_sort
 

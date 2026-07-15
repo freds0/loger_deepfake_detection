@@ -7,3 +7,10 @@ mil_weight: 0.5
 reg_weight: 1.0e-4
 auc_margin: 1.0
 pos_weight: null
+# Focal Loss on the image-level (global + fused) terms; local L_CE stays BCE.
+focal: false
+focal_gamma: 2.0
+focal_alpha: 0.25
+# Single-Center Loss on the global-head penultimate features (0 disables).
+scl_weight: 0.0
+scl_margin: 0.01

@@ -1,0 +1,8 @@
+# V9: soft log-sum-exp local pooling, tau=0.5 (PLAN_v0.2 §3).
+defaults:
+  - ntire_v2_base
+  - _self_
+
+model:
+  local_pool: lse
+  pool_temperature: 0.5
