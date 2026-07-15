@@ -16,6 +16,7 @@ defaults:
 seed: 0
 deterministic: true
 ckpt_path: null
+tune_batch_size: false   # when true, find data.batch_size via binary search and exit (no fit)
 output_dir: ./outputs
 resume:
   enabled: true

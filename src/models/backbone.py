@@ -27,6 +27,39 @@ import torch.nn as nn
 from transformers import AutoModel
 
 
+def enable_gradient_checkpointing(model: nn.Module, name: str) -> None:
+    """Enable HF gradient checkpointing on a ``PreTrainedModel``-like object.
+
+    Args:
+        model: The top-level pretrained model (e.g. the full ``SiglipModel``
+            before narrowing down to ``.vision_model`` -- HF's
+            ``gradient_checkpointing_enable`` walks ``self.modules()``, so
+            calling it before extracting a submodule still reaches every
+            encoder layer).
+        name: Human-readable backbone name, for the error message.
+    """
+    if not hasattr(model, "gradient_checkpointing_enable"):
+        raise RuntimeError(
+            f"{name} backbone's underlying HF model has no "
+            "`gradient_checkpointing_enable()` -- unsupported by the "
+            "installed transformers version for this architecture. Disable "
+            "`backbone.gradient_checkpointing` or upgrade transformers."
+        )
+    try:
+        # use_reentrant=False: transformers' own default is
+        # use_reentrant=True, but the reentrant implementation can silently
+        # produce wrong/None gradients when a checkpointed segment has no
+        # parameters requiring grad (peft_mode="frozen"/"lora" outside the
+        # injected LoRA layers) -- it needs an input requiring grad to
+        # correctly rebuild the backward graph.
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    except ValueError as e:
+        raise RuntimeError(
+            f"{name} backbone does not support gradient checkpointing in the "
+            f"installed transformers version: {e}"
+        ) from e
+
+
 class Siglip2Backbone(nn.Module):
     """Frozen SigLIP 2 vision encoder exposing patch tokens and MAP pooling.
 
@@ -39,6 +72,9 @@ class Siglip2Backbone(nn.Module):
             ``config_overrides`` (used for fast, offline unit tests).
         config_overrides: ``SiglipVisionConfig`` kwargs for the non-pretrained
             path (e.g. a tiny model for testing).
+        gradient_checkpointing: Trade ~25-30% more compute for ~40-60% less
+            activation memory (useful for larger batches / backbones under
+            full fine-tuning).
     """
 
     def __init__(
@@ -47,18 +83,21 @@ class Siglip2Backbone(nn.Module):
         freeze: bool = True,
         pretrained: bool = True,
         config_overrides: dict | None = None,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         if pretrained:
             # Fixed-resolution SigLIP 2 checkpoints load via the SigLIP v1
             # classes (backward compatible); AutoModel returns the full model.
             full = AutoModel.from_pretrained(model_name)
-            self.vision_model = full.vision_model
         else:
             from transformers import SiglipVisionConfig, SiglipVisionModel
 
             cfg = SiglipVisionConfig(**(config_overrides or {}))
-            self.vision_model = SiglipVisionModel(cfg).vision_model
+            full = SiglipVisionModel(cfg)
+        if gradient_checkpointing:
+            enable_gradient_checkpointing(full, "SigLIP")
+        self.vision_model = full.vision_model
         self.hidden_size = self.vision_model.config.hidden_size
 
         if freeze:

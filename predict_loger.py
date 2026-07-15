@@ -19,6 +19,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--face-crop", action="store_true", help="Detect+crop face first")
     p.add_argument("--face-backend", default="opencv", choices=["opencv", "retinaface", "dlib"])
     p.add_argument("--csv", default=None, help="Optional CSV output path")
+    p.add_argument(
+        "--use-ema",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use EMACallback weights from the checkpoint if present (default: on)",
+    )
     return p.parse_args()
 
 
@@ -30,7 +36,10 @@ def main() -> None:
         image_size=args.image_size,
         use_face_crop=args.face_crop,
         face_backend=args.face_backend,
+        use_ema=args.use_ema,
     )
+    if args.use_ema:
+        print(f"[EMA] {'using EMA weights' if predictor.used_ema else 'no EMA state in checkpoint -- using raw weights'}")
     results = predictor.predict_folder(args.input) if os.path.isdir(args.input) else [
         predictor.predict_image(args.input)
     ]

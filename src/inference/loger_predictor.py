@@ -17,6 +17,7 @@ from ..data.face_detection import FaceCropper
 from ..data.transforms import build_transform
 from ..lightning.loger_module import LOGERLightningModule
 from ..models.backbones import normalization_stats
+from ..utils.ema import load_ema_weights
 
 _IMG_EXTS = ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp")
 
@@ -41,9 +42,15 @@ class LOGERPredictor:
         use_face_crop: bool = False,
         face_backend: str = "opencv",
         face_margin: float = 1.3,
+        use_ema: bool = True,
     ) -> None:
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.module = LOGERLightningModule.load_from_checkpoint(ckpt_path, map_location=self.device)
+
+        # Best-effort: silently keeps the raw weights if the checkpoint has no
+        # EMACallback state (e.g. it was trained with EMA disabled).
+        self.used_ema = load_ema_weights(ckpt_path, self.module.model) if use_ema else False
+
         self.module.eval()
         self.module.to(self.device)
 

@@ -77,8 +77,8 @@ clipping at 1.0; degradation-style training augmentation.
   as cheaper ablations).
 - The paper trains its global models with **Focal Loss** (M3: CE→Focal); all
   image-level terms here use BCE.
-- Discriminative learning rates (backbone vs head) and horizontal-flip TTA are
-  not implemented.
+- Discriminative learning rates (backbone vs head) are not implemented;
+  horizontal-flip TTA is available at predict time via `model.tta_hflip=true`.
 - The paper realises multi-resolution via train-low/infer-high ensemble
   members; here `model.eval_resolutions` averages one model's logits over
   several inference resolutions.
@@ -106,6 +106,7 @@ configs/
   loger_fsm_siglip2.yaml       # LOGER+FSM, SigLIP2 (main experiment)
   loger_fsm_dinov2.yaml        # LOGER+FSM, DINOv2
   loger_fsm_baseline.yaml      # LOGER without FSM (ablation)
+  loger_fsm_ntire.yaml         # LOGER on NTIRE 2026 (FSM off, augmentation on)
   config.yaml                  # OSDFD defaults
   backbone/ model/ peft/ fsm/ loss/ optimizer/ scheduler/ data/ trainer/ logger/ callbacks/
 docs/                          # source papers
@@ -181,6 +182,25 @@ and `data.source=manifest data.manifest=file.csv`.
 To produce this layout from raw FF++ videos see `scripts/preprocess_ffpp.py`
 and `scripts/download/` (dataset download helpers).
 
+### NTIRE 2026 (shard layout)
+
+The NTIRE 2026 *Robust AI-generated Image Detection In The Wild* release is a
+set of shards, each with a labels CSV and an image folder:
+
+```
+<root>/                          # default: data/NTIRE-RobustAIGenDetection-train
+  shard_0/
+    labels.csv                   # columns: ,image_name,label  (0=real, 1=fake)
+    images/*.png|jpg
+  shard_1/ ... shard_N/
+```
+
+Select it with `data=ntire` (already the default in `loger_fsm_ntire.yaml`) and
+list the shards present on disk via `data.train_shards`. There is no separate
+labelled val/test set: a deterministic 5% of the files (`data.val_fraction`,
+by filename hash) is held out for validation. Leftover `shard_*.zip` archives
+next to the extracted folders are ignored and can be deleted.
+
 ---
 
 ## Training (LOGER + FSM)
@@ -199,6 +219,7 @@ python train_loger.py --config-name loger_fsm_siglip2 fsm.enabled=false
 python train_loger.py --config-name loger_fsm_siglip2 trainer.precision=bf16-mixed
 python train_loger.py --config-name loger_fsm_siglip2 trainer.strategy=ddp trainer.devices=2
 python train_loger.py --config-name loger_fsm_siglip2 scheduler.warmup_steps=1000
+python train_loger.py --config-name loger_fsm_siglip2 tune_batch_size=true   # find data.batch_size, then exit
 ```
 
 or `./scripts/train_loger.sh --config-name loger_fsm_siglip2 ...` (activates the
@@ -233,6 +254,59 @@ python train_loger.py --config-name loger_fsm_siglip2 \
   data.augmentation.gaussian_noise=0.15
 ```
 
+### Training on NTIRE 2026
+
+`loger_fsm_ntire.yaml` is the dedicated experiment config: FSM off (NTIRE has
+no per-generator domain labels), degradation augmentation on, `bf16-mixed`,
+500 warmup steps, balanced sampling and auto-resume from
+`outputs/loger_fsm_ntire/`. The config defaults to shards `[0..6]` — override
+`data.train_shards` to match the shards actually on disk.
+
+```bash
+# 1. validate the dataset (CSVs, corrupt images, class distribution)
+python scripts/validate_dataset.py \
+  --root data/NTIRE-RobustAIGenDetection-train --shards 0 1 2 3 4 5
+
+# 2. ~100-step smoke test
+python train_loger.py --config-name loger_fsm_ntire \
+  'data.train_shards=[0,1,2,3,4,5]' \
+  trainer.max_steps=100 trainer.val_check_interval=100 \
+  trainer.limit_val_batches=20 resume.enabled=false
+
+# 3. (optional) find the largest data.batch_size for this GPU, then exit
+python train_loger.py --config-name loger_fsm_ntire \
+  'data.train_shards=[0,1,2,3,4,5]' tune_batch_size=true
+
+# 4. full training (auto-resumes from last.ckpt if interrupted)
+python train_loger.py --config-name loger_fsm_ntire \
+  'data.train_shards=[0,1,2,3,4,5]'
+```
+
+Monitor with `tensorboard --logdir outputs/loger_fsm_ntire`; checkpointing
+tracks `val/auc` and keeps `best.ckpt` + `last.ckpt`. If you raise
+`data.batch_size` well above the default 48 (step 3), scale `optimizer.lr`
+roughly linearly with it.
+
+### Multi-GPU (DDP)
+
+```bash
+python train_loger.py --config-name loger_fsm_ntire trainer.devices=8 trainer.strategy=ddp
+```
+
+- **Effective batch size** = `data.batch_size × trainer.devices` (each rank
+  loads its own `data.batch_size`-sized batch). Scale `optimizer.lr` linearly
+  with the effective batch if you change `trainer.devices` relative to a
+  tuned single-GPU run (e.g. 2x devices -> ~2x `lr`).
+- **`data.balanced_sampling`** (the NTIRE default class-rebalancing sampler,
+  see P0.3) is **single-GPU only** in this version — `WeightedRandomSampler`
+  isn't DDP-aware, and `train_dataloader()` raises if
+  `trainer.world_size > 1` with it enabled. Either run single-device or set
+  `data.balanced_sampling=false data.real_oversample=4` for multi-GPU runs.
+- **`trainer.val_check_interval`** counts optimizer steps **per rank**, not
+  global steps — validation frequency in wall-clock time is unaffected by
+  `trainer.devices`, but the *step number* it validates at is not comparable
+  across runs with a different device count.
+
 ---
 
 ## Evaluation
@@ -245,6 +319,21 @@ python test_loger.py --config-name loger_fsm_siglip2 \
 
 Reports ACC, AUC, F1, precision, recall, AP, EER, FPR, FNR, logs
 confusion/ROC/PR figures and writes `predictions.csv`.
+
+**Multi-resolution + horizontal-flip TTA.** Both only affect `predict_step`
+(the `predictions.csv` this script writes), not the `trainer.test()` metrics
+printed above; average one model's logits over several inference resolutions
+and/or over `x`/`hflip(x)`:
+
+```bash
+python test_loger.py --config-name loger_fsm_siglip2 \
+    ckpt_path=outputs/loger_fsm_siglip2/DATE/TIME/checkpoints/best.ckpt \
+    model.eval_resolutions=[224,336,448] model.tta_hflip=true
+```
+
+Compare the "Evaluation metrics" table across `eval_resolutions=[224]` (single-
+resolution baseline) vs `[224,336,448]` vs `+model.tta_hflip=true` and keep the
+combination with the best val AUC/acc for the final submission.
 
 ---
 

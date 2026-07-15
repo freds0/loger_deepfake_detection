@@ -129,9 +129,20 @@ class LOGERModel(nn.Module):
         head_hidden_dim: Hidden width of both branch heads.
         head_dropout: Dropout in both branch heads.
         fusion_weights: Branch weights ``(alpha_global, alpha_local)``;
-            ``None`` = uniform ``alpha_m = 1/M`` (paper default).
+            ``None`` = uniform ``alpha_m = 1/M`` (paper default). Mutually
+            exclusive with ``learnable_fusion``.
+        learnable_fusion: Learn the branch fusion weights instead of a fixed
+            0.5/0.5 average. Adds a 2-parameter ``fusion_logits`` combined via
+            softmax (so weights stay positive and sum to 1). The paper's
+            fixed local-branch prior (10% of patches manipulated) assumes
+            localised face-swap forgeries; for whole-image synthesis (e.g.
+            NTIRE) that prior is less reliable, so letting the model weigh
+            the two branches is cheap to try.
         pretrained: Load pre-trained backbone weights.
         backbone_config_overrides: Tiny-model config for offline tests.
+        gradient_checkpointing: Trade ~25-30% more compute for ~40-60% less
+            backbone activation memory (larger batch / larger backbone under
+            full fine-tuning).
     """
 
     def __init__(
@@ -148,12 +159,19 @@ class LOGERModel(nn.Module):
         head_hidden_dim: int = 256,
         head_dropout: float = 0.0,
         fusion_weights: tuple[float, float] | None = None,
+        learnable_fusion: bool = False,
         pretrained: bool = True,
         backbone_config_overrides: dict | None = None,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         if peft_mode not in PEFT_MODES:
             raise ValueError(f"Unknown peft_mode: {peft_mode} (choose from {PEFT_MODES})")
+        if learnable_fusion and fusion_weights is not None:
+            raise ValueError(
+                "fusion_weights and learnable_fusion are mutually exclusive "
+                "(one is a fixed value, the other is learned from scratch)."
+            )
         self.peft_mode = peft_mode
         self.topk_ratio = topk_ratio
 
@@ -163,6 +181,7 @@ class LOGERModel(nn.Module):
             freeze=(peft_mode != "full"),
             pretrained=pretrained,
             config_overrides=backbone_config_overrides,
+            gradient_checkpointing=gradient_checkpointing,
         )
         if peft_mode == "lora":
             inject_lora(self.backbone, r=lora_r, alpha=lora_alpha, dropout=lora_dropout)
@@ -173,11 +192,16 @@ class LOGERModel(nn.Module):
         self.global_head = ImageClassifier(d, hidden_dim=head_hidden_dim, dropout=head_dropout)
         self.local_head = PatchClassifier(d, hidden_dim=head_hidden_dim, dropout=head_dropout)
 
-        if fusion_weights is not None:
-            w = torch.tensor(list(fusion_weights), dtype=torch.float32)
+        self.learnable_fusion = learnable_fusion
+        if learnable_fusion:
+            # softmax(0, 0) = (0.5, 0.5): same starting point as the fixed default.
+            self.fusion_logits = nn.Parameter(torch.zeros(2))
         else:
-            w = torch.full((2,), 0.5)  # uniform alpha_m = 1/M, M = 2 branches
-        self.register_buffer("fusion_weights", w)
+            if fusion_weights is not None:
+                w = torch.tensor(list(fusion_weights), dtype=torch.float32)
+            else:
+                w = torch.full((2,), 0.5)  # uniform alpha_m = 1/M, M = 2 branches
+            self.register_buffer("fusion_weights", w)
 
     def forward(
         self,
@@ -209,7 +233,7 @@ class LOGERModel(nn.Module):
         local_logits = mil_topk_pool(patch_diffs, self.topk_ratio)
 
         # Logit-space fusion: d = alpha_g * d_global + alpha_l * d_local.
-        w = self.fusion_weights
+        w = torch.softmax(self.fusion_logits, dim=0) if self.learnable_fusion else self.fusion_weights
         logits = w[0] * global_logits + w[1] * local_logits
 
         return LOGEROutput(
@@ -226,6 +250,7 @@ class LOGERModel(nn.Module):
         self,
         pixel_values: torch.Tensor,
         resolutions: list[int],
+        precomputed: tuple[int, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """Multi-resolution inference (LOGER global-branch strategy).
 
@@ -235,12 +260,18 @@ class LOGERModel(nn.Module):
         Args:
             pixel_values: Normalised images ``(B, 3, H, W)``.
             resolutions: Square input resolutions to average over.
+            precomputed: Optional ``(resolution, logits)`` for a resolution
+                the caller already ran a forward pass for (typically the
+                input's native resolution) -- skips recomputing it.
 
         Returns:
             Averaged fused logits ``(B,)``.
         """
         logits = []
         for res in resolutions:
+            if precomputed is not None and res == precomputed[0]:
+                logits.append(precomputed[1])
+                continue
             x = pixel_values
             if x.shape[-1] != res:
                 x = F.interpolate(x, size=(res, res), mode="bicubic", align_corners=False)

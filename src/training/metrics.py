@@ -46,6 +46,37 @@ def equal_error_rate(labels: np.ndarray, scores: np.ndarray) -> tuple[float, flo
     return eer, float(thresholds[idx])
 
 
+def best_accuracy_threshold(labels: np.ndarray, scores: np.ndarray) -> tuple[float, float]:
+    """Find the score threshold that maximises accuracy.
+
+    Every accuracy-maximising threshold is one of the ROC curve's thresholds
+    (each partitions the scores into a distinct predicted-positive set, and
+    accuracy only changes at those boundaries), so sweeping them is exhaustive
+    without a per-threshold rescan of the labels:
+
+        acc(t) = tpr(t) * pos_rate + (1 - fpr(t)) * (1 - pos_rate)
+
+    Args:
+        labels: Binary ground-truth ``(N,)`` (1 = fake, 0 = real).
+        scores: Predicted fake probabilities ``(N,)``.
+
+    Returns:
+        ``(threshold, accuracy)`` of the best operating point. ``threshold``
+        is finite even if ROC's own "reject everything" sentinel is ``inf``
+        (clipped to ``max(scores) + 1e-6``, equivalent to accepting nothing).
+    """
+    labels = np.asarray(labels).astype(int)
+    scores = np.asarray(scores).astype(float)
+    fpr, tpr, thresholds = roc_curve(labels, scores)
+    pos_rate = labels.mean()
+    acc = tpr * pos_rate + (1.0 - fpr) * (1.0 - pos_rate)
+    idx = int(np.argmax(acc))
+    threshold = thresholds[idx]
+    if not np.isfinite(threshold):
+        threshold = float(scores.max()) + 1e-6
+    return float(threshold), float(acc[idx])
+
+
 def compute_metrics(
     labels: np.ndarray,
     scores: np.ndarray,

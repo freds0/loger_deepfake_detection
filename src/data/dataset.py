@@ -23,13 +23,18 @@ Each item is a dict with keys ``pixel_values``, ``label`` (binary),
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import torch
-from PIL import Image
+from PIL import Image, ImageFile
 from torch.utils.data import Dataset
+
+# "In the wild" datasets (NTIRE, web-scraped, ...) can contain truncated JPEGs;
+# decode as much as is available instead of raising OSError mid-training.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Forgery source-domain ids used by the Forgery Style Mixture module.
 # 0 is reserved for real faces; each manipulation type is a distinct domain.
@@ -189,6 +194,41 @@ def records_from_ntire(root: str, shard_nums: list[int]) -> list[Record]:
     if not records:
         raise RuntimeError(f"No images found for shards {shard_nums} under {root}")
     return records
+
+
+def split_records_by_hash(
+    records: list[Record],
+    val_fraction: float,
+    split: str,
+) -> list[Record]:
+    """Deterministic, RNG-free train/val split keyed by image filename.
+
+    A record is routed to ``val`` iff the MD5 hash of its filename (the
+    basename, not the full path, so the split is stable across machines/roots
+    with the same images) falls in the bottom ``val_fraction`` of the hash
+    space. Two calls on the same records always agree, independent of
+    ``seed``, process, or call order -- unlike a shuffle-and-slice split,
+    nothing here is randomised.
+
+    Args:
+        records: Records to split (typically every shard assigned to train).
+        val_fraction: Fraction of records routed to ``"val"``.
+        split: ``"train"`` (complement) or ``"val"``.
+
+    Returns:
+        The matching subset of ``records`` (order preserved).
+    """
+    if split not in ("train", "val"):
+        raise ValueError(f"split must be 'train' or 'val', got {split!r}")
+    threshold = int(val_fraction * 10_000)
+
+    def _in_val(rec: Record) -> bool:
+        digest = hashlib.md5(Path(rec.path).name.encode()).hexdigest()
+        return int(digest, 16) % 10_000 < threshold
+
+    if split == "val":
+        return [r for r in records if _in_val(r)]
+    return [r for r in records if not _in_val(r)]
 
 
 def oversample_real(records: list[Record], factor: int) -> list[Record]:

@@ -18,6 +18,8 @@ from lightning.pytorch.callbacks import (
 from lightning.pytorch.loggers import Logger, TensorBoardLogger, WandbLogger
 from omegaconf import DictConfig, OmegaConf
 
+from .ema import EMACallback
+
 
 def build_loggers(cfg: DictConfig) -> list[Logger]:
     """Build TensorBoard and/or W&B loggers per the ``logger`` config."""
@@ -75,6 +77,9 @@ def build_callbacks(cfg: DictConfig) -> list[L.Callback]:
     if cc.lr_monitor.enabled and has_logger:
         callbacks.append(LearningRateMonitor(logging_interval="step"))
 
+    if cc.ema.enabled:
+        callbacks.append(EMACallback(decay=cc.ema.decay))
+
     return callbacks
 
 
@@ -99,6 +104,9 @@ def build_trainer(cfg: DictConfig, loggers: list[Logger], callbacks: list[L.Call
         limit_test_batches=getattr(tc, "limit_test_batches", None),
         limit_predict_batches=getattr(tc, "limit_predict_batches", None),
         deterministic=cfg.deterministic,
+        # cudnn autotune: only safe when determinism isn't required (the two
+        # are mutually exclusive in PyTorch/Lightning).
+        benchmark=not cfg.deterministic,
         logger=loggers,
         callbacks=callbacks,
         default_root_dir=cfg.output_dir,

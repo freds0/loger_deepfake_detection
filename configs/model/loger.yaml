@@ -9,5 +9,7 @@ head_hidden_dim: 256
 head_dropout: 0.1
 topk_ratio: 0.1              # k = floor(0.1 * number_of_patches)
 fusion_weights: null         # null = uniform logit-space averaging
+learnable_fusion: false      # mutually exclusive with fusion_weights
 # Multi-resolution inference. Empty/null uses the input resolution only.
 eval_resolutions: []
+tta_hflip: false             # predict_step only: average logits(x) and logits(hflip(x))

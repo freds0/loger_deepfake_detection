@@ -17,15 +17,42 @@ defaults:
   - _self_
 
 seed: 0
-deterministic: true
+# Non-deterministic + cudnn benchmark: seed still fixes init/data order, and a
+# long NTIRE run benefits more from cudnn autotune than from bitwise
+# reproducibility. build_trainer() sets Trainer(benchmark=not deterministic).
+deterministic: false
 ckpt_path: null
+tune_batch_size: false   # when true, find data.batch_size via binary search and exit (no fit)
 output_dir: ./outputs
 resume:
   enabled: true
   dir: outputs/loger_fsm_ntire   # experiment root scanned for last.ckpt
 
+trainer:
+  precision: bf16-mixed   # Hopper/Blackwell: no GradScaler, more stable than fp16
+
+# Linear LR warmup before the cosine schedule (~1.6% of max_steps=30000):
+# full fine-tune of a pretrained VFM at lr=3e-5 risks destroying pretrained
+# features in the first few steps without it.
+scheduler:
+  warmup_steps: 500
+
 fsm:
   enabled: false
+
+data:
+  augmentation:
+    enabled: true
+    hflip: 0.5
+    random_resize: 0.2
+    jpeg: 0.3
+    gaussian_blur: 0.2
+    motion_blur: 0.1
+    gaussian_noise: 0.1
+    brightness: 0.2
+    contrast: 0.2
+    color_jitter: 0.2
+    random_crop: 0.2
 
 model:
   eval_resolutions: [224]

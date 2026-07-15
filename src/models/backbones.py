@@ -34,7 +34,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .backbone import Siglip2Backbone
+from .backbone import Siglip2Backbone, enable_gradient_checkpointing
 from .lora import LoRALinear
 
 # Per-family normalisation statistics (used by the data transforms).
@@ -83,6 +83,8 @@ class Dinov2Backbone(nn.Module):
         pretrained: Load pre-trained weights; if False build a random tiny
             model from ``config_overrides`` (offline tests).
         config_overrides: ``Dinov2Config`` kwargs for the non-pretrained path.
+        gradient_checkpointing: Trade ~25-30% more compute for ~40-60% less
+            activation memory.
     """
 
     num_prefix_tokens = 1  # [CLS]
@@ -93,6 +95,7 @@ class Dinov2Backbone(nn.Module):
         freeze: bool = True,
         pretrained: bool = True,
         config_overrides: dict | None = None,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         if pretrained:
@@ -104,6 +107,8 @@ class Dinov2Backbone(nn.Module):
 
             self.model = Dinov2Model(Dinov2Config(**(config_overrides or {})))
         self.hidden_size = self.model.config.hidden_size
+        if gradient_checkpointing:
+            enable_gradient_checkpointing(self.model, "DINOv2")
 
         if freeze:
             for p in self.model.parameters():
@@ -144,6 +149,7 @@ class Dinov3Backbone(Dinov2Backbone):
         freeze: bool = True,
         pretrained: bool = True,
         config_overrides: dict | None = None,
+        gradient_checkpointing: bool = False,
     ) -> None:
         try:
             from transformers import DINOv3ViTModel  # noqa: F401
@@ -161,6 +167,8 @@ class Dinov3Backbone(Dinov2Backbone):
             raise ValueError("Dinov3Backbone supports pretrained=True only.")
         self.hidden_size = self.model.config.hidden_size
         self.num_prefix_tokens = 1 + getattr(self.model.config, "num_register_tokens", 0)
+        if gradient_checkpointing:
+            enable_gradient_checkpointing(self.model, "DINOv3")
         if freeze:
             for p in self.model.parameters():
                 p.requires_grad_(False)
@@ -185,6 +193,7 @@ class CLIPBackbone(nn.Module):
         freeze: bool = True,
         pretrained: bool = True,
         config_overrides: dict | None = None,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         if pretrained:
@@ -197,6 +206,8 @@ class CLIPBackbone(nn.Module):
             self.model = CLIPVisionModel(CLIPVisionConfig(**(config_overrides or {})))
         self.hidden_size = self.model.config.hidden_size
         self._native_size = self.model.config.image_size
+        if gradient_checkpointing:
+            enable_gradient_checkpointing(self.model, "CLIP")
 
         if freeze:
             for p in self.model.parameters():
@@ -248,6 +259,7 @@ def build_backbone(
     freeze: bool = True,
     pretrained: bool = True,
     config_overrides: dict | None = None,
+    gradient_checkpointing: bool = False,
 ) -> nn.Module:
     """Instantiate a backbone by family name (``siglip2-base`` -> ``siglip2``).
 
@@ -257,11 +269,17 @@ def build_backbone(
         freeze: Freeze backbone weights (PEFT modes re-enable selectively).
         pretrained: Load pre-trained weights.
         config_overrides: Tiny-model config for offline tests.
+        gradient_checkpointing: Trade compute for activation memory.
     """
     family = name.split("-")[0]
     if family not in _BACKBONES:
         raise ValueError(f"Unknown backbone: {name} (choose from {sorted(_BACKBONES)})")
-    kwargs: dict = dict(freeze=freeze, pretrained=pretrained, config_overrides=config_overrides)
+    kwargs: dict = dict(
+        freeze=freeze,
+        pretrained=pretrained,
+        config_overrides=config_overrides,
+        gradient_checkpointing=gradient_checkpointing,
+    )
     if model_name:
         kwargs["model_name"] = model_name
     return _BACKBONES[family](**kwargs)

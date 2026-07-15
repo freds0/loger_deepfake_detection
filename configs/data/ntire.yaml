@@ -4,13 +4,19 @@
 source: ntire
 root: data/NTIRE-RobustAIGenDetection-train
 manifest: null
-train_shards: [0, 1, 2, 3, 4]
-val_shards: [5]
-test_shards: [6]
+# All shards feed train_shards; val/test are carved out of it by filename hash
+# (val_fraction below) instead of holding out a whole shard, since shards are
+# not verified to be i.i.d. and the release has no separate labelled test set.
+train_shards: [0, 1, 2, 3, 4, 5, 6]
+val_shards: null   # ignored: val_fraction is set (see below)
+test_shards: null  # ignored: val_fraction is set (see below)
+val_fraction: 0.05
 image_size: ${backbone.image_size}
 batch_size: 48
-num_workers: 8
-real_oversample: 1           # class balance unknown; disabled unless tuned
+num_workers: 16
+prefetch_factor: 4
+real_oversample: 1           # mutually exclusive with balanced_sampling
+balanced_sampling: true      # inverse-class-frequency WeightedRandomSampler (single-GPU only)
 use_face_crop: false
 face_backend: opencv
 face_margin: 1.3

@@ -13,3 +13,6 @@ early_stopping:
   patience: 10
 lr_monitor:
   enabled: true
+ema:
+  enabled: true
+  decay: 0.999

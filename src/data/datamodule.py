@@ -8,9 +8,9 @@ the paper's 4x real-face oversampling for class balance.
 from __future__ import annotations
 
 import lightning as L
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from .dataset import (
     ForgeryFrameDataset,
@@ -19,6 +19,7 @@ from .dataset import (
     records_from_faceforensics,
     records_from_manifest,
     records_from_ntire,
+    split_records_by_hash,
 )
 from .face_detection import FaceCropper
 from .transforms import build_transform
@@ -32,11 +33,30 @@ class ForgeryDataModule(L.LightningDataModule):
             ``"ntire"`` (NTIRE 2026 shard layout).
         root: Dataset root (folder mode / ntire mode).
         manifest: CSV path (manifest mode).
-        train_shards/val_shards/test_shards: Shard numbers per split (ntire mode).
+        train_shards/val_shards/test_shards: Shard numbers per split (ntire
+            mode). Ignored when ``val_fraction`` is set (see below).
+        val_fraction: Ntire mode only. When set, ``train``/``val``/``test``
+            are no longer distinct shards: every record from ``train_shards``
+            is combined and deterministically re-split by
+            :func:`~src.data.dataset.split_records_by_hash` keyed on image
+            filename (``val_fraction`` routed to val). ``val`` and ``test``
+            resolve to the *same* held-out subset -- the NTIRE release ships
+            no separate labelled test set, so a distinct test split would
+            just be a second validation split under a different name.
+            ``None`` (default) keeps the shard-per-split behaviour.
         image_size: Model input resolution.
         batch_size: Batch size.
         num_workers: Dataloader workers.
+        prefetch_factor: Batches pre-loaded per worker (ignored when
+            ``num_workers == 0``, where the DataLoader forbids setting it).
         real_oversample: Replication factor for real training frames (paper: 4).
+        balanced_sampling: Draw training batches with a
+            ``WeightedRandomSampler`` weighted by inverse class frequency,
+            instead of physically duplicating records. Mutually exclusive
+            with ``real_oversample > 1`` (raises at construction time).
+            ``WeightedRandomSampler`` is not DDP-aware: this option raises in
+            ``train_dataloader`` if ``trainer.world_size > 1`` (single-GPU
+            only in this version).
         use_face_crop: Enable face detection / cropping.
         face_backend: Face-detection backend (see :class:`FaceCropper`).
         face_margin: Crop enlargement factor (paper: 1.3).
@@ -59,10 +79,13 @@ class ForgeryDataModule(L.LightningDataModule):
         train_shards: list[int] | None = None,
         val_shards: list[int] | None = None,
         test_shards: list[int] | None = None,
+        val_fraction: float | None = None,
         image_size: int = 224,
         batch_size: int = 48,
         num_workers: int = 8,
+        prefetch_factor: int = 2,
         real_oversample: int = 4,
+        balanced_sampling: bool = False,
         use_face_crop: bool = False,
         face_backend: str = "opencv",
         face_margin: float = 1.3,
@@ -75,6 +98,11 @@ class ForgeryDataModule(L.LightningDataModule):
         persistent_workers: bool = True,
     ) -> None:
         super().__init__()
+        if balanced_sampling and real_oversample > 1:
+            raise ValueError(
+                "balanced_sampling and real_oversample>1 are mutually exclusive "
+                "(both rebalance classes; pick one)."
+            )
         self.save_hyperparameters()
         self._train: ForgeryFrameDataset | None = None
         self._val: ForgeryFrameDataset | None = None
@@ -123,7 +151,12 @@ class ForgeryDataModule(L.LightningDataModule):
             if i < len(fake_sel):
                 selected.append(fake_sel[i])
         if len(selected) < limit:
-            remaining = [r for r in records if r not in selected]
+            # id()-based membership, not `r not in selected` (Record is a
+            # dataclass, so `in` does an O(len(selected)) value comparison per
+            # element -> O(n*m) overall on large splits). `selected` is built
+            # from the same `records` objects, so identity is safe here.
+            selected_ids = {id(r) for r in selected}
+            remaining = [r for r in records if id(r) not in selected_ids]
             selected.extend(remaining[: limit - len(selected)])
         return selected[:limit]
 
@@ -140,10 +173,22 @@ class ForgeryDataModule(L.LightningDataModule):
         elif h.source == "ntire":
             if h.root is None:
                 raise ValueError("`root` is required for source='ntire'")
-            shard_nums = getattr(h, f"{split}_shards")
-            if not shard_nums:
-                raise ValueError(f"`{split}_shards` is required for source='ntire'")
-            records = records_from_ntire(h.root, shard_nums)
+            if h.val_fraction is not None:
+                # No real held-out shard: re-split every train_shards record by
+                # filename hash. val and test intentionally resolve to the same
+                # subset (see class docstring).
+                if not h.train_shards:
+                    raise ValueError(
+                        "`train_shards` is required for source='ntire' with val_fraction set"
+                    )
+                pool = records_from_ntire(h.root, h.train_shards)
+                target = "val" if split in ("val", "test") else "train"
+                records = split_records_by_hash(pool, h.val_fraction, target)
+            else:
+                shard_nums = getattr(h, f"{split}_shards")
+                if not shard_nums:
+                    raise ValueError(f"`{split}_shards` is required for source='ntire'")
+                records = records_from_ntire(h.root, shard_nums)
         else:
             raise ValueError(f"Unknown data source: {h.source}")
         return self._limit_records(records, split)
@@ -204,20 +249,41 @@ class ForgeryDataModule(L.LightningDataModule):
                 face_cropper=cropper,
             )
 
-    def _loader(self, dataset: ForgeryFrameDataset, shuffle: bool) -> DataLoader:
+    def _train_sampler(self) -> WeightedRandomSampler | None:
+        if not self.hparams.balanced_sampling:
+            return None
+        world_size = getattr(getattr(self, "trainer", None), "world_size", 1)
+        if world_size > 1:
+            raise ValueError(
+                "balanced_sampling is not DDP-aware (WeightedRandomSampler has no "
+                "distributed variant here); use a single device or disable "
+                "balanced_sampling for multi-GPU runs."
+            )
+        counts = Counter(r.label for r in self._train.records)
+        weights = [1.0 / counts[r.label] for r in self._train.records]
+        return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+
+    def _loader(
+        self, dataset: ForgeryFrameDataset, shuffle: bool, sampler: WeightedRandomSampler | None = None
+    ) -> DataLoader:
         h = self.hparams
-        return DataLoader(
-            dataset,
+        kwargs: dict = dict(
             batch_size=h.batch_size,
-            shuffle=shuffle,
+            shuffle=shuffle and sampler is None,
+            sampler=sampler,
             num_workers=h.num_workers,
             pin_memory=h.pin_memory,
             drop_last=shuffle,
             persistent_workers=h.persistent_workers and h.num_workers > 0,
         )
+        if h.num_workers > 0:
+            # DataLoader raises ValueError if prefetch_factor is set at all
+            # (even to its own default) when num_workers == 0.
+            kwargs["prefetch_factor"] = h.prefetch_factor
+        return DataLoader(dataset, **kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        return self._loader(self._train, shuffle=True)
+        return self._loader(self._train, shuffle=True, sampler=self._train_sampler())
 
     def val_dataloader(self) -> DataLoader:
         return self._loader(self._val, shuffle=False)

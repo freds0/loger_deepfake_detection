@@ -1,7 +1,10 @@
 # SigLIP 2 large, patch16, 256px.
+# data.normalization_mean/std in configs/data/*.yaml already default to the
+# correct SigLIP stats ([0.5,0.5,0.5]/[0.5,0.5,0.5]) -- no override needed.
 name: siglip2-large
 model_name: google/siglip2-large-patch16-256
 image_size: 256
 freeze: true
 pretrained: true
 config_overrides: null
+gradient_checkpointing: false
