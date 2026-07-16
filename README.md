@@ -106,14 +106,25 @@ configs/
   loger_fsm_siglip2.yaml       # LOGER+FSM, SigLIP2 (main experiment)
   loger_fsm_dinov2.yaml        # LOGER+FSM, DINOv2
   loger_fsm_baseline.yaml      # LOGER without FSM (ablation)
+  loger_fsm_combined.yaml      # LOGER+FSM trained across every preprocessed dataset
   config.yaml                  # OSDFD defaults
+  data/combined.yaml           # manifest list for cross-dataset training
   backbone/ model/ peft/ fsm/ loss/ optimizer/ scheduler/ data/ trainer/ logger/ callbacks/
 docs/                          # source papers
 scripts/                       # {train,eval,infer}_loger.sh + OSDFD scripts
-  preprocess_ffpp.py           # FF++ videos -> face crops
+  pre_process.sh               # runs every preprocess_*.py below (--dry-run, --only)
+  archive_dataset.sh           # tar.bz2 of every file referenced by data/manifests/*.csv
+  preprocess_ffpp.py           # FaceForensics++ videos -> face crops
+  preprocess_celebdf.py        # Celeb-DF-v2 videos -> face crops
+  preprocess_sdfvd.py          # SDFVD 2.0 videos -> face crops
+  preprocess_comprehensive.py  # Comprehensive Roop/Akool (pre-cropped zip) -> manifest
+  preprocess_df40.py           # DF40 (40-method zoo) -> manifest
+  preprocess_dfbench.py        # DFBench (general AI-image benchmark) -> manifest
   download/                    # dataset download helpers
 src/
   data/                        # dataset, LightningDataModule, transforms, face detection
+                               # manifest_utils.py (split/domain-registry helpers),
+                               # video_extract.py (shared MTCNN frame extraction)
   models/                      # backbones.py (VFM abstraction), loger.py, fsm.py,
                                # lora.py, osdfd.py, cdc_adapter.py, head.py, ...
   losses/                      # loger.py (CE/AUC/MIL/reg), SCL, combined
@@ -176,10 +187,72 @@ Labels, forgery domains and splits are inferred from the folder tree; distinct
 manipulation subfolders become distinct **forgery source domains** for FSM.
 Point the config at it with `data.root=/path/to/<root>`. For arbitrary datasets
 (CDF, DFDC, WDF, …) use a manifest CSV with columns `path,label,domain[,split]`
-and `data.source=manifest data.manifest=file.csv`.
+and `data.source=manifest data.manifest=file.csv`. `data.manifest` also accepts
+a **list** of CSVs, which is how the multi-dataset setup below combines
+several preprocessed sources into one training set.
 
 To produce this layout from raw FF++ videos see `scripts/preprocess_ffpp.py`
 and `scripts/download/` (dataset download helpers).
+
+### Multi-dataset training (manifest CSVs)
+
+Six raw datasets are supported out of the box, each turned into a manifest CSV
+(`path,label,domain,split`) by its own `scripts/preprocess_*.py` script:
+
+| Dataset | Script | Raw format |
+| --- | --- | --- |
+| FaceForensics++ (C23) | `preprocess_ffpp.py` | videos, MTCNN face-crop |
+| Celeb-DF-v2 | `preprocess_celebdf.py` | videos, MTCNN face-crop |
+| SDFVD 2.0 | `preprocess_sdfvd.py` | videos, MTCNN face-crop |
+| Comprehensive (Roop/Akool) | `preprocess_comprehensive.py` | zip of pre-cropped frames |
+| DF40 | `preprocess_df40.py` | zip zoo, 39 usable generator methods |
+| DFBench | `preprocess_dfbench.py` | 21 source zips + JSON labels (general, non-face) |
+
+Real frames get `domain=0`; every forgery method/source registers its own
+domain id via `DomainRegistry` (`data/manifests/domain_registry.json`), so FSM
+sees one distinct domain per manipulation method across all datasets combined.
+Splits without an official train/val/test file are assigned deterministically
+by hashing an identity/video key (`src/data/manifest_utils.py::deterministic_split`),
+so re-running a script never reshuffles an already-processed video across
+splits.
+
+Run everything with the orchestrator script:
+
+```bash
+scripts/pre_process.sh                       # all 6 datasets, full extraction (hours on a single GPU)
+scripts/pre_process.sh --dry-run              # tiny per-dataset sample, fast sanity check
+scripts/pre_process.sh --only ffpp celebdf    # run a subset (ffpp celebdf sdfvd comprehensive df40 dfbench)
+```
+
+It activates the `loger` conda env, runs each `preprocess_*.py` in turn,
+reports a failure per dataset without aborting the rest, and prints a summary
+of which manifests were written under `data/manifests/`. Each script can also
+be run standalone (e.g. `python scripts/preprocess_df40.py --limit-per-method 5`
+for a quick test) — see `--help` on each for dataset-specific options
+(`--root`/`--video-root`, `--out-root`, `--manifest-out`, frame-count and
+face-margin knobs for the video-based scripts).
+
+Video-based preprocessing (`ffpp`, `celebdf`, `sdfvd`) needs
+`facenet-pytorch` for MTCNN face detection — install it separately (see
+`requirements.txt`); it is not a hard dependency of the rest of the repo.
+
+`configs/data/combined.yaml` lists all 6 manifests; any that haven't been
+generated yet are skipped with a warning, so training can start after running
+only a subset of the preprocessing scripts. See **Training** below.
+
+To package everything actually used in training (every path referenced by
+`data/manifests/*.csv`, the manifests themselves, and the domain registry)
+into a single archive:
+
+```bash
+scripts/archive_dataset.sh                          # -> data/processed_dataset_<timestamp>.tar.bz2
+scripts/archive_dataset.sh /path/to/out.tar.bz2      # explicit output path
+scripts/archive_dataset.sh --manifests ffpp,celebdf  # archive a subset of datasets
+```
+
+Some datasets (DF40) reference images in place under the original dataset
+tree instead of a local copy, so the archive follows those paths too — the
+script only reads files, it never modifies anything.
 
 ---
 
@@ -190,6 +263,7 @@ conda activate loger
 python train_loger.py --config-name loger_fsm_siglip2
 python train_loger.py --config-name loger_fsm_dinov2
 python train_loger.py --config-name loger_fsm_baseline      # FSM off (ablation)
+python train_loger.py --config-name loger_fsm_combined      # cross-dataset (see Multi-dataset training above)
 
 # common overrides
 python train_loger.py --config-name loger_fsm_siglip2 data.root=/data/ffpp_frames

@@ -1,0 +1,35 @@
+# LOGER + Forgery Style Mixture, trained across every preprocessed dataset
+# (FF++, Celeb-DF-v2, SDFVD, Comprehensive Roop/Akool, DF40, DFBench). FSM
+# stays enabled: each dataset/method contributes its own FSM domain id (see
+# src/data/manifest_utils.py::DomainRegistry), so there are many distinct
+# forgery domains to mix styles across.
+defaults:
+  - backbone: siglip2_base
+  - model: loger
+  - peft: full
+  - fsm: default
+  - loss: loger
+  - optimizer: adamw
+  - scheduler: cosine
+  - data: combined
+  - trainer: default
+  - logger: default
+  - callbacks: loger
+  - _self_
+
+seed: 0
+deterministic: true
+ckpt_path: null
+output_dir: ./outputs
+resume:
+  enabled: true
+  dir: outputs/loger_fsm_combined   # experiment root scanned for last.ckpt
+
+model:
+  eval_resolutions: [224]
+
+hydra:
+  run:
+    dir: outputs/loger_fsm_combined/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

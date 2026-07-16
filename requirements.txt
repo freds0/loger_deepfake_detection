@@ -32,7 +32,7 @@ matplotlib>=3.8.0
 # Testing
 pytest>=8.0.0
 
-# Optional: FF++ video preprocessing (scripts/preprocess_ffpp.py, MTCNN face detection)
+# Optional: video preprocessing (scripts/preprocess_{ffpp,celebdf,sdfvd}.py, MTCNN face detection)
 # facenet-pytorch>=2.6.0
 
 # Optional: dataset download helpers (scripts/download/)

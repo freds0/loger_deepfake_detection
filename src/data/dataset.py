@@ -23,12 +23,13 @@ Each item is a dict with keys ``pixel_values``, ``label`` (binary),
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import torch
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from torch.utils.data import Dataset
 
 # Forgery source-domain ids used by the Forgery Style Mixture module.
@@ -146,18 +147,30 @@ def records_from_faceforensics(
     return records
 
 
-def records_from_manifest(csv_path: str, split: str | None = None) -> list[Record]:
-    """Build records from a manifest CSV (``path,label,domain[,split]``)."""
-    df = pd.read_csv(csv_path)
-    required = {"path", "label", "domain"}
-    if not required.issubset(df.columns):
-        raise ValueError(f"Manifest must contain columns {required}, got {list(df.columns)}")
-    if split is not None and "split" in df.columns:
-        df = df[df["split"] == split]
-    return [
-        Record(path=r.path, label=int(r.label), domain=int(r.domain))
-        for r in df.itertuples(index=False)
-    ]
+def records_from_manifest(csv_path: str | list[str], split: str | None = None) -> list[Record]:
+    """Build records from one or more manifest CSVs (``path,label,domain[,split]``).
+
+    Passing a list of paths (e.g. one per dataset) concatenates their records,
+    which is how cross-dataset training combines FF++, Celeb-DF-v2, DF40, etc.
+    """
+    is_list = not isinstance(csv_path, str)
+    csv_paths = list(csv_path) if is_list else [csv_path]
+    records: list[Record] = []
+    for path in csv_paths:
+        if is_list and not Path(path).is_file():
+            print(f"[warn] manifest not found, skipping: {path}")
+            continue
+        df = pd.read_csv(path)
+        required = {"path", "label", "domain"}
+        if not required.issubset(df.columns):
+            raise ValueError(f"Manifest must contain columns {required}, got {list(df.columns)}")
+        if split is not None and "split" in df.columns:
+            df = df[df["split"] == split]
+        records.extend(
+            Record(path=r.path, label=int(r.label), domain=int(r.domain))
+            for r in df.itertuples(index=False)
+        )
+    return records
 
 
 def records_from_ntire(root: str, shard_nums: list[int]) -> list[Record]:
@@ -221,8 +234,20 @@ class ForgeryFrameDataset(Dataset):
         return len(self.records)
 
     def __getitem__(self, idx: int) -> dict:
-        rec = self.records[idx]
-        image = Image.open(rec.path).convert("RGB")
+        # A handful of source files across the combined datasets are corrupt
+        # or zero-byte (e.g. some DF40 images) — skip them at load time
+        # instead of crashing the whole training run, trying at most once
+        # per record so a run of bad neighbours can't loop forever.
+        for _ in range(len(self.records)):
+            rec = self.records[idx]
+            try:
+                image = Image.open(rec.path).convert("RGB")
+                break
+            except (UnidentifiedImageError, OSError) as e:
+                warnings.warn(f"skipping unreadable image {rec.path}: {e}")
+                idx = (idx + 1) % len(self.records)
+        else:
+            raise RuntimeError("No readable images found in dataset")
         if self.face_cropper is not None:
             image = self.face_cropper(image)
         pixel_values = self.transform(image)
