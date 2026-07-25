@@ -6,10 +6,10 @@
 # plus the manifests themselves and the domain registry, so the archive can
 # be extracted elsewhere and pointed at directly with data.manifest=...
 #
-# Some datasets (e.g. DF40) reference images in place under the original
-# dataset tree rather than a copy under data/, so those paths are included
-# too — this script only reads them, never modifies anything outside the
-# repo.
+# Some datasets (e.g. DF40, HiDF) reference images in place under the
+# original dataset tree rather than a copy under data/, so those paths are
+# included too — this script only reads them, never modifies anything
+# outside the repo.
 #
 # Usage:
 #   scripts/archive_dataset.sh                          # -> data/processed_dataset_<timestamp>.tar.bz2

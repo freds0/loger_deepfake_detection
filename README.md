@@ -120,6 +120,8 @@ scripts/                       # {train,eval,infer}_loger.sh + OSDFD scripts
   preprocess_comprehensive.py  # Comprehensive Roop/Akool (pre-cropped zip) -> manifest
   preprocess_df40.py           # DF40 (40-method zoo) -> manifest
   preprocess_dfbench.py        # DFBench (general AI-image benchmark) -> manifest
+  preprocess_hydrafake.py      # HydraFake (multi-generator zip benchmark) -> manifest
+  preprocess_hidf.py           # HiDF (face-swap frames) -> manifest
   download/                    # dataset download helpers
 src/
   data/                        # dataset, LightningDataModule, transforms, face detection
@@ -196,8 +198,8 @@ and `scripts/download/` (dataset download helpers).
 
 ### Multi-dataset training (manifest CSVs)
 
-Six raw datasets are supported out of the box, each turned into a manifest CSV
-(`path,label,domain,split`) by its own `scripts/preprocess_*.py` script:
+Eight raw datasets are supported out of the box, each turned into a manifest
+CSV (`path,label,domain,split`) by its own `scripts/preprocess_*.py` script:
 
 | Dataset | Script | Raw format |
 | --- | --- | --- |
@@ -207,6 +209,17 @@ Six raw datasets are supported out of the box, each turned into a manifest CSV
 | Comprehensive (Roop/Akool) | `preprocess_comprehensive.py` | zip of pre-cropped frames |
 | DF40 | `preprocess_df40.py` | zip zoo, 39 usable generator methods |
 | DFBench | `preprocess_dfbench.py` | 21 source zips + JSON labels (general, non-face) |
+| HydraFake | `preprocess_hydrafake.py` | 8 zips (train/val real+fake, 4 test subsets), ~30 generator methods |
+| HiDF | `preprocess_hidf.py` | pre-extracted face-swap frames, real/fake in separate folders |
+
+Two other dataset folders under `DATASETS/DeepFake/` were checked and are
+**not** wired up: `WildFake` is an incomplete git-lfs checkout (folder tree
+only, no actual image bytes downloaded — `git lfs checkout` would need to run
+inside that external directory, which preprocessing scripts here deliberately
+never write to); `HydraFake`'s own `jsons/` label files are likewise git-lfs
+pointer stubs, but that dataset is still usable since real/fake are also
+unambiguous from its zip folder structure directly (see
+`preprocess_hydrafake.py`).
 
 Real frames get `domain=0`; every forgery method/source registers its own
 domain id via `DomainRegistry` (`data/manifests/domain_registry.json`), so FSM
@@ -219,9 +232,9 @@ splits.
 Run everything with the orchestrator script:
 
 ```bash
-scripts/pre_process.sh                       # all 6 datasets, full extraction (hours on a single GPU)
+scripts/pre_process.sh                       # all 8 datasets, full extraction (hours on a single GPU)
 scripts/pre_process.sh --dry-run              # tiny per-dataset sample, fast sanity check
-scripts/pre_process.sh --only ffpp celebdf    # run a subset (ffpp celebdf sdfvd comprehensive df40 dfbench)
+scripts/pre_process.sh --only ffpp celebdf    # run a subset (ffpp celebdf sdfvd comprehensive df40 dfbench hydrafake hidf)
 ```
 
 It activates the `loger` conda env, runs each `preprocess_*.py` in turn,
@@ -236,7 +249,7 @@ Video-based preprocessing (`ffpp`, `celebdf`, `sdfvd`) needs
 `facenet-pytorch` for MTCNN face detection — install it separately (see
 `requirements.txt`); it is not a hard dependency of the rest of the repo.
 
-`configs/data/combined.yaml` lists all 6 manifests; any that haven't been
+`configs/data/combined.yaml` lists all 8 manifests; any that haven't been
 generated yet are skipped with a warning, so training can start after running
 only a subset of the preprocessing scripts. See **Training** below.
 
@@ -250,9 +263,9 @@ scripts/archive_dataset.sh /path/to/out.tar.bz2      # explicit output path
 scripts/archive_dataset.sh --manifests ffpp,celebdf  # archive a subset of datasets
 ```
 
-Some datasets (DF40) reference images in place under the original dataset
-tree instead of a local copy, so the archive follows those paths too — the
-script only reads files, it never modifies anything.
+Some datasets (DF40, HiDF) reference images in place under the original
+dataset tree instead of a local copy, so the archive follows those paths too
+— the script only reads files, it never modifies anything.
 
 ---
 

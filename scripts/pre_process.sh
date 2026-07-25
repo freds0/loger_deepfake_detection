@@ -17,7 +17,7 @@ else
 fi
 cd "$(dirname "$0")/.."
 
-DATASETS=(ffpp celebdf sdfvd comprehensive df40 dfbench)
+DATASETS=(ffpp celebdf sdfvd comprehensive df40 dfbench hydrafake hidf)
 SELECTED=()
 DRY_RUN=0
 
@@ -81,6 +81,18 @@ run_dfbench() {
   local extra=()
   [[ $DRY_RUN -eq 1 ]] && extra=(--limit-per-zip 50)
   python scripts/preprocess_dfbench.py "${extra[@]}"
+}
+
+run_hydrafake() {
+  local extra=()
+  [[ $DRY_RUN -eq 1 ]] && extra=(--limit 5)
+  python scripts/preprocess_hydrafake.py "${extra[@]}"
+}
+
+run_hidf() {
+  local extra=()
+  [[ $DRY_RUN -eq 1 ]] && extra=(--limit 5)
+  python scripts/preprocess_hidf.py "${extra[@]}"
 }
 
 FAILED=()
