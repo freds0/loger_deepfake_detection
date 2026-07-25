@@ -32,7 +32,9 @@ class ForgeryDataModule(L.LightningDataModule):
         source: ``"faceforensics"`` (folder scan), ``"manifest"`` (CSV) or
             ``"ntire"`` (NTIRE 2026 shard layout).
         root: Dataset root (folder mode / ntire mode).
-        manifest: CSV path (manifest mode).
+        manifest: CSV path, or a list of CSV paths to combine (manifest mode) —
+            e.g. one manifest per dataset for cross-dataset training (see
+            ``configs/data/combined.yaml``).
         train_shards/val_shards/test_shards: Shard numbers per split (ntire
             mode). Ignored when ``val_fraction`` is set (see below).
         val_fraction: Ntire mode only. When set, ``train``/``val``/``test``
@@ -75,7 +77,7 @@ class ForgeryDataModule(L.LightningDataModule):
         self,
         source: str = "faceforensics",
         root: str | None = None,
-        manifest: str | None = None,
+        manifest: str | list[str] | None = None,
         train_shards: list[int] | None = None,
         val_shards: list[int] | None = None,
         test_shards: list[int] | None = None,

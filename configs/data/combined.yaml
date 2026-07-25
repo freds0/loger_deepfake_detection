@@ -1,0 +1,59 @@
+# Cross-dataset training: combines every preprocessed manifest CSV produced by
+# scripts/preprocess_*.py (run them all via scripts/pre_process.sh) into one
+# training set. Manifests not yet generated are skipped with a warning by
+# src/data/dataset.py::records_from_manifest, so training can start after
+# running only a subset of the preprocessing scripts.
+source: manifest              # "faceforensics" (folder) or "manifest" (CSV/list of CSVs)
+root: null
+manifest:
+  - data/manifests/ffpp.csv
+  - data/manifests/celebdf.csv
+  - data/manifests/sdfvd.csv
+  - data/manifests/comprehensive.csv
+  - data/manifests/df40.csv
+  - data/manifests/dfbench.csv
+  - data/manifests/hydrafake.csv
+  - data/manifests/hidf.csv
+image_size: ${backbone.image_size}
+batch_size: 48
+num_workers: 8
+real_oversample: 4
+use_face_crop: false
+face_backend: opencv
+face_margin: 1.3
+domain_map: null             # unused in manifest mode; domains come from the CSVs
+normalization_mean: [0.5, 0.5, 0.5]
+normalization_std: [0.5, 0.5, 0.5]
+max_records_per_split: null
+
+augmentation:
+  enabled: false
+  hflip: 0.5
+  random_resize: 0.0
+  resize_scale: [0.25, 0.75]
+  jpeg: 0.0
+  jpeg_quality: [40, 90]
+  gaussian_blur: 0.0
+  blur_sigma: [0.1, 2.0]
+  motion_blur: 0.0
+  motion_kernel: [3, 9]
+  gaussian_noise: 0.0
+  noise_std: 0.03
+  brightness: 0.0
+  brightness_limit: 0.2
+  contrast: 0.0
+  contrast_limit: 0.2
+  color_jitter: 0.0
+  color_jitter_strength: 0.2
+  hue: 0.05
+  random_crop: 0.0
+  crop_scale: [0.8, 1.0]
+  # Backward-compatible knobs retained for old commands.
+  random_resized_crop: false
+  rrc_scale: [0.8, 1.0]
+  downscale: 0.0
+  downscale_range: [0.25, 0.75]
+  random_erasing: 0.0
+
+pin_memory: true
+persistent_workers: true

@@ -107,14 +107,27 @@ configs/
   loger_fsm_dinov2.yaml        # LOGER+FSM, DINOv2
   loger_fsm_baseline.yaml      # LOGER without FSM (ablation)
   loger_fsm_ntire.yaml         # LOGER on NTIRE 2026 (FSM off, augmentation on)
+  loger_fsm_combined.yaml      # LOGER+FSM trained across every preprocessed dataset
   config.yaml                  # OSDFD defaults
+  data/combined.yaml           # manifest list for cross-dataset training
   backbone/ model/ peft/ fsm/ loss/ optimizer/ scheduler/ data/ trainer/ logger/ callbacks/
 docs/                          # source papers
 scripts/                       # {train,eval,infer}_loger.sh + OSDFD scripts
-  preprocess_ffpp.py           # FF++ videos -> face crops
+  pre_process.sh               # runs every preprocess_*.py below (--dry-run, --only)
+  archive_dataset.sh           # tar.bz2 of every file referenced by data/manifests/*.csv
+  preprocess_ffpp.py           # FaceForensics++ videos -> face crops
+  preprocess_celebdf.py        # Celeb-DF-v2 videos -> face crops
+  preprocess_sdfvd.py          # SDFVD 2.0 videos -> face crops
+  preprocess_comprehensive.py  # Comprehensive Roop/Akool (pre-cropped zip) -> manifest
+  preprocess_df40.py           # DF40 (40-method zoo) -> manifest
+  preprocess_dfbench.py        # DFBench (general AI-image benchmark) -> manifest
+  preprocess_hydrafake.py      # HydraFake (multi-generator zip benchmark) -> manifest
+  preprocess_hidf.py           # HiDF (face-swap frames) -> manifest
   download/                    # dataset download helpers
 src/
   data/                        # dataset, LightningDataModule, transforms, face detection
+                               # manifest_utils.py (split/domain-registry helpers),
+                               # video_extract.py (shared MTCNN frame extraction)
   models/                      # backbones.py (VFM abstraction), loger.py, fsm.py,
                                # lora.py, osdfd.py, cdc_adapter.py, head.py, ...
   losses/                      # loger.py (CE/AUC/MIL/reg), SCL, combined
@@ -177,7 +190,9 @@ Labels, forgery domains and splits are inferred from the folder tree; distinct
 manipulation subfolders become distinct **forgery source domains** for FSM.
 Point the config at it with `data.root=/path/to/<root>`. For arbitrary datasets
 (CDF, DFDC, WDF, …) use a manifest CSV with columns `path,label,domain[,split]`
-and `data.source=manifest data.manifest=file.csv`.
+and `data.source=manifest data.manifest=file.csv`. `data.manifest` also accepts
+a **list** of CSVs, which is how the multi-dataset setup below combines
+several preprocessed sources into one training set.
 
 To produce this layout from raw FF++ videos see `scripts/preprocess_ffpp.py`
 and `scripts/download/` (dataset download helpers).
@@ -201,6 +216,70 @@ labelled val/test set: a deterministic 5% of the files (`data.val_fraction`,
 by filename hash) is held out for validation. Leftover `shard_*.zip` archives
 next to the extracted folders are ignored and can be deleted.
 
+### Multi-dataset training (manifest CSVs)
+
+Eight raw datasets are supported out of the box, each turned into a manifest
+CSV (`path,label,domain,split`) by its own `scripts/preprocess_*.py` script:
+
+| Dataset | Script | Raw format |
+| --- | --- | --- |
+| FaceForensics++ (C23) | `preprocess_ffpp.py` | videos, MTCNN face-crop |
+| Celeb-DF-v2 | `preprocess_celebdf.py` | videos, MTCNN face-crop |
+| SDFVD 2.0 | `preprocess_sdfvd.py` | videos, MTCNN face-crop |
+| Comprehensive (Roop/Akool) | `preprocess_comprehensive.py` | zip of pre-cropped frames |
+| DF40 | `preprocess_df40.py` | zip zoo, 39 usable generator methods |
+| DFBench | `preprocess_dfbench.py` | 21 source zips + JSON labels (general, non-face) |
+| HydraFake | `preprocess_hydrafake.py` | 8 zips (train/val real+fake, 4 test subsets), ~30 generator methods |
+| HiDF | `preprocess_hidf.py` | pre-extracted face-swap frames, real/fake in separate folders |
+
+Real frames get `domain=0`; every forgery method/source registers its own
+domain id via `DomainRegistry` (`data/manifests/domain_registry.json`), so FSM
+sees one distinct domain per manipulation method across all datasets combined.
+Splits without an official train/val/test file are assigned deterministically
+by hashing an identity/video key (`src/data/manifest_utils.py::deterministic_split`),
+so re-running a script never reshuffles an already-processed video across
+splits. Video-based scripts (`ffpp`, `celebdf`, `sdfvd`) share MTCNN frame
+extraction from `src/data/video_extract.py`.
+
+Run everything with the orchestrator script:
+
+```bash
+scripts/pre_process.sh                       # all 8 datasets, full extraction (hours on a single GPU)
+scripts/pre_process.sh --dry-run              # tiny per-dataset sample, fast sanity check
+scripts/pre_process.sh --only ffpp celebdf    # run a subset (ffpp celebdf sdfvd comprehensive df40 dfbench hydrafake hidf)
+```
+
+It runs each `preprocess_*.py` in turn, reports a failure per dataset without
+aborting the rest, and prints a summary of which manifests were written under
+`data/manifests/`. Each script can also be run standalone (e.g.
+`python scripts/preprocess_df40.py --limit-per-method 5` for a quick test) —
+see `--help` on each for dataset-specific options (`--root`/`--video-root`,
+`--out-root`, `--manifest-out`, frame-count and face-margin knobs for the
+video-based scripts).
+
+Video-based preprocessing (`ffpp`, `celebdf`, `sdfvd`) needs
+`facenet-pytorch` for MTCNN face detection — install it separately (see
+`requirements.txt`); it is not a hard dependency of the rest of the repo.
+
+`configs/data/combined.yaml` lists all 8 manifests; any that haven't been
+generated yet are skipped with a warning, so training can start after running
+only a subset of the preprocessing scripts. Train across every combined
+dataset with `--config-name loger_fsm_combined` (see Training below).
+
+To package everything actually used in training (every path referenced by
+`data/manifests/*.csv`, the manifests themselves, and the domain registry)
+into a single archive:
+
+```bash
+scripts/archive_dataset.sh                          # -> data/processed_dataset_<timestamp>.tar.bz2
+scripts/archive_dataset.sh /path/to/out.tar.bz2      # explicit output path
+scripts/archive_dataset.sh --manifests ffpp,celebdf  # archive a subset of datasets
+```
+
+Some datasets (DF40, HiDF) reference images in place under the original
+dataset tree instead of a local copy, so the archive follows those paths too
+— the script only reads files, it never modifies anything.
+
 ---
 
 ## Training (LOGER + FSM)
@@ -210,6 +289,7 @@ conda activate loger
 python train_loger.py --config-name loger_fsm_siglip2
 python train_loger.py --config-name loger_fsm_dinov2
 python train_loger.py --config-name loger_fsm_baseline      # FSM off (ablation)
+python train_loger.py --config-name loger_fsm_combined      # cross-dataset (see Multi-dataset training above)
 
 # common overrides
 python train_loger.py --config-name loger_fsm_siglip2 data.root=/data/ffpp_frames
@@ -224,6 +304,27 @@ python train_loger.py --config-name loger_fsm_siglip2 tune_batch_size=true   # f
 
 or `./scripts/train_loger.sh --config-name loger_fsm_siglip2 ...` (activates the
 env for you).
+
+### Comparing architecture variations on the full combined dataset
+
+`scripts/train_arch_ablations.sh` trains every architecture variation (MIL
+top-k ratio, logit fusion, head capacity, backbone) on top of
+`loger_fsm_combined`, one Hydra override per variant — the same variations as
+`configs/ntire_v2_*.yaml` (see `docs/ablations_ntire.md`), but against the
+full 8-dataset manifest instead of the NTIRE subset:
+
+```bash
+scripts/train_arch_ablations.sh                       # all 12 variants, full trainer.max_steps (30000)
+scripts/train_arch_ablations.sh --steps 8000           # override the step budget for every variant
+scripts/train_arch_ablations.sh --only base dinov2     # run a subset
+scripts/train_arch_ablations.sh --dry-run              # ~10-step smoke run per variant, fast sanity check
+```
+
+Each variant disables `resume` (they'd otherwise share
+`resume.dir: outputs/loger_fsm_combined`) and logs to its own
+`outputs/loger_fsm_combined/<date>/<time>/`; compare them with
+`tensorboard --logdir outputs/loger_fsm_combined` on `val/auc` (EMA), same
+adoption rule as the NTIRE protocol (Δ ≥ +0.10 pp).
 
 - **Optimizer**: AdamW (`lr`, `weight_decay`, betas via `configs/optimizer/adamw.yaml`),
   cosine schedule with optional linear warmup, gradient clipping

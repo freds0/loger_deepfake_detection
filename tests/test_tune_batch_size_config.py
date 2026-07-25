@@ -17,6 +17,7 @@ ROOT_CONFIGS = [
     "loger_fsm_baseline",
     "loger_fsm_dinov2",
     "loger_fsm_ntire",
+    "loger_fsm_combined",
 ]
 
 
