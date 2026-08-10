@@ -17,21 +17,16 @@
 # re-run after adding new images, and this is what makes re-running this
 # script cheap.
 #
-# Sync roots are chosen per manifest path:
-#   - paths under data/ (built by our own preprocess_*.py into a directory
-#     dedicated to that one dataset, e.g. data/hydrafake_frames) are synced
-#     as a single whole directory: it holds nothing but that dataset's files,
-#     so one sync call is both exact and fast.
-#   - paths outside data/ (DF40, HiDF: referenced in place under the
-#     read-only DATASETS/DeepFake tree, only ever read here, never modified)
-#     sync per unique immediate parent directory instead, since those
-#     external roots also contain sibling files/archives that are NOT part
-#     of the manifest (e.g. HiDF's Real-img.zip / Fake-img.zip) and must not
-#     be uploaded. This is exact for every dataset added so far (each
-#     referenced folder is unambiguously real-only or fake-only, see
-#     scripts/preprocess_*.py) but can mean many sync calls for datasets with
-#     deep per-clip nesting (e.g. df40) — fine for occasional/explicit use,
-#     just not fast.
+# Sync units are computed by scripts/_s3_sync_plan.py: the largest
+# directories that can each be synced as a whole without pulling in files the
+# manifest doesn't reference (verified by comparing on-disk recursive file
+# count against manifest row count, descending one path component at a time
+# on mismatch). This matters for datasets referenced in place under the
+# read-only DATASETS/DeepFake tree (DF40, HiDF — only ever read here, never
+# modified), whose folders also hold sibling content the manifest doesn't use
+# (e.g. HiDF's Real-img.zip, DF40's landmarks/ next to frames/). For DF40 this
+# collapses ~27k naive per-file-parent directories down to ~1k verified sync
+# units — still not one-shot, but tractable.
 #
 # Usage:
 #   scripts/upload_to_s3.sh                       # hydrafake + hidf (default)
@@ -106,19 +101,7 @@ for name in "${names[@]}"; do
   echo
   echo "=== [$name] syncing to $BUCKET/$name/ ==="
 
-  # For data/-relative paths: their dataset-dedicated root (2 path parts).
-  # For absolute paths (external, shared trees): each unique parent dir.
-  # Pure awk (no per-line fork) so this stays fast on 100k+-row manifests.
-  dirs=$(tail -n +2 "$manifest" | cut -d, -f1 | awk -F'/' '
-    {
-      if ($0 ~ /^\//) {
-        out = $1
-        for (i = 2; i < NF; i++) out = out "/" $i
-      } else {
-        out = $1 "/" $2
-      }
-      print out
-    }' | sort -u)
+  dirs=$(python3 scripts/_s3_sync_plan.py "$manifest")
 
   n_dirs=0
   n_missing=0
